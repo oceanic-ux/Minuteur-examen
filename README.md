@@ -39,7 +39,7 @@ git push -u origin main
 2. Sous *Source*, choisissez **Deploy from a branch**
 3. Choisissez la branche **main** et le dossier **/ (root)**
 4. Cliquez **Save**
-5. Après ~1 minute, l'URL apparaît : `https://VOTRE-NOM.github.io/minuteurs-haut-lac/`
+5. Après ~1 minute, l'URL apparaît : `https://oceanic-ux.github.io/Minuteur-examen/`
 
 ### 4. Installer sur iPad / iPhone
 
