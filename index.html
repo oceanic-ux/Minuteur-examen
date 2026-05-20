@@ -703,25 +703,29 @@ function joinList(arr, fr){
   return arr.slice(0,-1).join(', ') + conj + arr[arr.length-1];
 }
 
-function buildReadingStartText(exam){
-  const fr = announceLang === 'fr';
-  if(totalRunning > 1){
-    return fr
-      ? `Le temps de lecture commence maintenant pour ${exam.title}.`
-      : `Reading time starts now for ${exam.title}.`;
-  }
+function buildReadingStartText(examList){
+  const fr=announceLang==='fr';
+  const names=examList.map(e=>e.title).filter(Boolean);
+  if(!names.length||names.every(n=>!n))return fr?"Le temps de lecture commence maintenant.":"Your reading time starts now.";
   return fr
-    ? "Le temps de lecture commence maintenant."
-    : "Your reading time starts now.";
+    ?`Le temps de lecture commence maintenant pour ${joinList(names,fr)}.`
+    :`Reading time starts now for ${joinList(names,fr)}.`;
 }
-
-function buildExamStartText(exam){
-  const fr = announceLang === 'fr';
-  const totalRunning = exams.filter(e=>e.status==='running').length;
-  if(totalRunning > 1){
-    return fr ? `L'examen ${exam.title} commence.` : `${exam.title} has started.`;
-  }
-  return fr ? "L'examen commence." : "The exam has started.";
+function buildReadingEndText(examList){
+  const fr=announceLang==='fr';
+  const names=examList.map(e=>e.title).filter(Boolean);
+  if(!names.length||names.every(n=>!n))return fr?"Le temps de lecture est terminé. L'examen commence.":"Reading time is over. The exam begins now.";
+  return fr
+    ?`Le temps de lecture est terminé pour ${joinList(names,fr)}. L'examen commence.`
+    :`Reading time is over for ${joinList(names,fr)}. The exam begins now.`;
+}
+function buildExamStartText(examList){
+  const fr=announceLang==='fr';
+  const names=examList.map(e=>e.title).filter(Boolean);
+  if(!names.length||names.every(n=>!n))return fr?"L'examen commence.":"The exam has started.";
+  return fr
+    ?`L'examen commence pour ${joinList(names,fr)}.`
+    :`The exam starts for ${joinList(names,fr)}.`;
 }
 
 // ── ALERT SOUNDS ──
@@ -740,14 +744,19 @@ function endSound(text){
   announce(text);
   beep(660,.2); setTimeout(()=>beep(880,.2),250); setTimeout(()=>beep(1100,.35),500);
 }
-function startReadingSound(exam){
+function startReadingSound(examList){
   if(silentMode)return;
-  announce(buildReadingStartText(exam));
+  announce(buildReadingStartText(examList));
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360);
 }
-function startExamSound(exam){
+function endReadingSound(examList){
   if(silentMode)return;
-  announce(buildExamStartText(exam));
+  announce(buildReadingEndText(examList));
+  beep(784,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(523,.2),360);
+}
+function startExamSound(examList){
+  if(silentMode)return;
+  announce(buildExamStartText(examList));
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360); setTimeout(()=>beep(1047,.3),540);
 }
 
@@ -861,11 +870,11 @@ function launchExam(examId){
   if(exam.readingOn){
     exam.status='reading';
     renderExamCol(exam);
-    setTimeout(()=>startReadingSound(exam), 100);
+    setTimeout(()=>startReadingSound([exam]), 100);
   } else {
     exam.status='running';
     renderExamCol(exam);
-    setTimeout(()=>startExamSound(exam), 100);
+    setTimeout(()=>startExamSound([exam]), 100);
   }
   ensureInterval();
   refreshGlobalControls();
@@ -874,17 +883,13 @@ function launchExam(examId){
 // ── LAUNCH ALL WAITING ──
 function launchAllWaiting(){
   const waiting=exams.filter(e=>e.status==='waiting');
+  const toRead=[], toRun=[];
   waiting.forEach(e=>{
-    if(e.readingOn){e.status='reading';renderExamCol(e);}
-    else{e.status='running';renderExamCol(e);}
+    if(e.readingOn){e.status='reading';renderExamCol(e);toRead.push(e);}
+    else{e.status='running';renderExamCol(e);toRun.push(e);}
   });
-  // Announce each exam (staggered slightly if multiple)
-  waiting.forEach((e,i)=>{
-    setTimeout(()=>{
-      if(e.status==='reading') startReadingSound(e);
-      else startExamSound(e);
-    }, i*1500);
-  });
+  if(toRead.length>0) setTimeout(()=>startReadingSound(toRead), 100);
+  if(toRun.length>0)  setTimeout(()=>startExamSound(toRun), toRead.length>0?1800:100);
   ensureInterval();
   refreshGlobalControls();
 }
@@ -1039,20 +1044,18 @@ function refreshAdjustLiveValues(){
 function tick(){
   if(paused)return;
 
-  // Collect alerts to batch per threshold
-  const alert30Batch=[]; // {examTitle, timerLabel, isExtra, minutes}
-  const alertBatch=[];   // same
-  const endBatch=[];     // {exam, timer}
+  const alert30Batch=[], alertBatch=[], endBatch=[];
+  const readingEndBatch=[], examStartBatch=[];
 
   exams.forEach(exam=>{
     if(exam.status==='reading'){
       exam.readingLeft--;
-      // No time-remaining alerts during reading phase
       if(exam.readingLeft<=0){
         exam.status='running'; exam.readingLeft=0;
         renderExamCol(exam);
+        readingEndBatch.push(exam);
+        examStartBatch.push(exam);
         refreshGlobalControls();
-        setTimeout(()=>startExamSound(exam), 200);
       }
     } else if(exam.status==='running'){
       exam.timers.forEach(t=>{
@@ -1077,22 +1080,24 @@ function tick(){
     }
   });
 
+  // Reading end + exam start as one combined announcement
+  if(readingEndBatch.length>0){
+    setTimeout(()=>{
+      endReadingSound(readingEndBatch);
+      setTimeout(()=>startExamSound(examStartBatch), 1500);
+    }, 0);
+  }
   // Fire batched alerts — each is already one complete sentence
   if(alert30Batch.length>0){
     alert30Sound(buildAlertText(alert30Batch[0].minutes, alert30Batch));
   }
   if(alertBatch.length>0){
-    // Stagger if both thresholds fired same tick so they don't overlap
     const delay=alert30Batch.length>0?3000:0;
     setTimeout(()=>alertSound(buildAlertText(alertBatch[0].minutes, alertBatch)), delay);
   }
-  // Combine all end announcements into one sentence
   if(endBatch.length>0){
-    const delay=(alert30Batch.length||alertBatch.length)?4000:0;
-    setTimeout(()=>{
-      const text=buildCombinedEndText(endBatch);
-      endSound(text);
-    }, delay);
+    const delay=(readingEndBatch.length||alert30Batch.length||alertBatch.length)?4000:0;
+    setTimeout(()=>endSound(buildCombinedEndText(endBatch)), delay);
   }
 
   refreshTimers();
