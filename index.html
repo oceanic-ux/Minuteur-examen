@@ -516,75 +516,72 @@ function beep(f,d,v=0.3){
 // ── SMART ANNOUNCEMENTS ──
 // Build announcement text with exam/timer context
 function buildAlertText(minutes, timerContexts){
-  // timerContexts: array of {examTitle, timerLabel, isExtra}
-  // isExtra = timer label is not 'Principal'
   const fr = announceLang === 'fr';
   const minText = fr
     ? (minutes <= 1 ? 'une minute' : `${minutes} minutes`)
     : (minutes <= 1 ? 'one minute' : `${minutes} minutes`);
-
-  let base = fr ? `Il reste ${minText}.` : `${minutes <= 1 ? 'One minute' : minText} remaining.`;
+  const base = fr ? `Il reste ${minText}.` : `${minutes <= 1 ? 'One minute' : minText} remaining.`;
 
   if(!timerContexts || timerContexts.length === 0) return base;
 
-  // Group by exam title to avoid repeating the same exam name
-  const examGroups = {}; // examTitle → [timerLabel, ...]
+  const runningExams = exams.filter(e=>e.status==='running');
+  const multipleExams = runningExams.length > 1;
+
+  // Count all active (non-done) timers across running exams
+  const totalActiveTimers = runningExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length, 0);
+  const allTimersAlerted = timerContexts.length === totalActiveTimers;
+
+  // Only add suffix if there are multiple exams OR it's an extra-time timer
+  const hasExtra = timerContexts.some(c=>c.isExtra);
+  if(!multipleExams && !hasExtra) return base;
+
+  // If all active timers are alerting and none are extra → no suffix needed even with multiple exams
+  if(allTimersAlerted && !hasExtra) return base;
+
+  // Build per-exam groups
+  const examGroups = {};
   timerContexts.forEach(({examTitle, timerLabel, isExtra})=>{
     if(!examGroups[examTitle]) examGroups[examTitle]=[];
     if(isExtra) examGroups[examTitle].push(timerLabel);
   });
 
-  const examTitles = Object.keys(examGroups);
-  const totalExams = exams.filter(e=>e.status==='running').length;
-  const allSameTime = timerContexts.length === exams.filter(e=>e.status==='running').reduce((n,e)=>n+e.timers.filter(t=>!t.done).length,0);
+  const parts = Object.entries(examGroups).map(([title, extras])=>{
+    if(extras.length > 0){
+      const extraStr = extras.join(fr?' et ':' and ');
+      return multipleExams
+        ? (fr ? `${title}, temps supplémentaire de ${extraStr}` : `${title}, extra time of ${extraStr}`)
+        : (fr ? `temps supplémentaire de ${extraStr}` : `extra time of ${extraStr}`);
+    }
+    return multipleExams ? title : '';
+  }).filter(Boolean);
 
-  // Build "for X (and Y)" suffix
-  let forSuffix = '';
-  if(!allSameTime || examTitles.length < totalExams){
-    // Not all running timers hit at once — need to specify
-    const parts = examTitles.map(title=>{
-      const extras = examGroups[title];
-      if(extras.length > 0){
-        const extraStr = extras.join(fr?' et ':' and ');
-        return fr ? `${title}, temps supplémentaire de ${extraStr}` : `${title}, extra time of ${extraStr}`;
-      }
-      return title;
-    });
-    const joined = parts.length === 1 ? parts[0]
-      : parts.slice(0,-1).join(', ') + (fr ? ' et ' : ' and ') + parts[parts.length-1];
-    forSuffix = fr ? ` Pour ${joined}.` : ` For ${joined}.`;
-  } else if(timerContexts.some(c=>c.isExtra)){
-    // All exams but some/all are extra time
-    const extras = [...new Set(timerContexts.filter(c=>c.isExtra).map(c=>c.timerLabel))];
-    const extraStr = extras.join(fr?' et ':' and ');
-    forSuffix = fr ? ` Temps supplémentaire de ${extraStr}.` : ` Extra time of ${extraStr}.`;
-  }
-
-  return base + forSuffix;
+  if(parts.length === 0) return base;
+  const joined = parts.length === 1 ? parts[0]
+    : parts.slice(0,-1).join(', ') + (fr?' et ':' and ') + parts[parts.length-1];
+  return base + (fr ? ` Pour ${joined}.` : ` For ${joined}.`);
 }
 
 function buildEndText(exam, timer){
   const fr = announceLang === 'fr';
-  const totalRunning = exams.filter(e=>e.status==='running').length;
   const isExtra = timer.label !== 'Principal';
-  const needsName = totalRunning > 1 || isExtra;
+  const multipleExams = exams.filter(e=>e.status==='running').length > 1;
 
-  let base = fr ? "Le temps est écoulé." : "Time is up.";
+  const base = fr ? "Le temps est écoulé." : "Time is up.";
+
+  if(!multipleExams && !isExtra) return base;
+
   let suffix = '';
-
-  if(needsName){
-    if(totalRunning > 1 && isExtra){
-      suffix = fr
-        ? ` Pour ${exam.title}, temps supplémentaire de ${timer.label}.`
-        : ` For ${exam.title}, extra time of ${timer.label}.`;
-    } else if(totalRunning > 1){
-      suffix = fr ? ` Pour ${exam.title}.` : ` For ${exam.title}.`;
-    } else {
-      // Same exam, extra time
-      suffix = fr
-        ? ` Temps supplémentaire de ${timer.label}.`
-        : ` Extra time of ${timer.label}.`;
-    }
+  if(multipleExams && isExtra){
+    suffix = fr
+      ? ` Pour ${exam.title}, temps supplémentaire de ${timer.label}.`
+      : ` For ${exam.title}, extra time of ${timer.label}.`;
+  } else if(multipleExams){
+    suffix = fr ? ` Pour ${exam.title}.` : ` For ${exam.title}.`;
+  } else {
+    // Single exam, extra time only
+    suffix = fr
+      ? ` Temps supplémentaire de ${timer.label}.`
+      : ` Extra time of ${timer.label}.`;
   }
   return base + suffix;
 }
@@ -934,10 +931,7 @@ function tick(){
   exams.forEach(exam=>{
     if(exam.status==='reading'){
       exam.readingLeft--;
-      if(exam.readingLeft<=alertSecs&&!exam.readingAlerted){
-        exam.readingAlerted=true;
-        alertBatch.push({examTitle:exam.title,timerLabel:'Principal',isExtra:false,minutes:Math.round(exam.readingLeft/60)});
-      }
+      // No time-remaining alerts during reading phase
       if(exam.readingLeft<=0){
         exam.status='running'; exam.readingLeft=0;
         renderExamCol(exam);
