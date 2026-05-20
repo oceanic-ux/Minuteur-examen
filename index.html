@@ -485,14 +485,6 @@ function announce(text, lang){
   setTimeout(() => window.speechSynthesis.speak(u), 80);
 }
 
-function alertText(minutes){
-  if(announceLang === 'en'){
-    return minutes === 1 ? 'One minute remaining.' : `${minutes} minutes remaining.`;
-  } else {
-    return minutes === 1 ? 'Il reste une minute.' : `Il reste ${minutes} minutes.`;
-  }
-}
-
 // ── AUDIO (beep fallback for desktop) ──
 let _audioCtx = null;
 function getAudioCtx(){
@@ -521,32 +513,128 @@ function beep(f,d,v=0.3){
   }catch(e){}
 }
 
-// ── ALERT SOUNDS → speech first, beep as complement ──
-function alertSound(minutes){
-  if(silentMode)return;
-  if(minutes !== undefined){
-    announce(alertText(minutes), announceLang);
+// ── SMART ANNOUNCEMENTS ──
+// Build announcement text with exam/timer context
+function buildAlertText(minutes, timerContexts){
+  // timerContexts: array of {examTitle, timerLabel, isExtra}
+  // isExtra = timer label is not 'Principal'
+  const fr = announceLang === 'fr';
+  const minText = fr
+    ? (minutes <= 1 ? 'une minute' : `${minutes} minutes`)
+    : (minutes <= 1 ? 'one minute' : `${minutes} minutes`);
+
+  let base = fr ? `Il reste ${minText}.` : `${minutes <= 1 ? 'One minute' : minText} remaining.`;
+
+  if(!timerContexts || timerContexts.length === 0) return base;
+
+  // Group by exam title to avoid repeating the same exam name
+  const examGroups = {}; // examTitle → [timerLabel, ...]
+  timerContexts.forEach(({examTitle, timerLabel, isExtra})=>{
+    if(!examGroups[examTitle]) examGroups[examTitle]=[];
+    if(isExtra) examGroups[examTitle].push(timerLabel);
+  });
+
+  const examTitles = Object.keys(examGroups);
+  const totalExams = exams.filter(e=>e.status==='running').length;
+  const allSameTime = timerContexts.length === exams.filter(e=>e.status==='running').reduce((n,e)=>n+e.timers.filter(t=>!t.done).length,0);
+
+  // Build "for X (and Y)" suffix
+  let forSuffix = '';
+  if(!allSameTime || examTitles.length < totalExams){
+    // Not all running timers hit at once — need to specify
+    const parts = examTitles.map(title=>{
+      const extras = examGroups[title];
+      if(extras.length > 0){
+        const extraStr = extras.join(fr?' et ':' and ');
+        return fr ? `${title}, temps supplémentaire de ${extraStr}` : `${title}, extra time of ${extraStr}`;
+      }
+      return title;
+    });
+    const joined = parts.length === 1 ? parts[0]
+      : parts.slice(0,-1).join(', ') + (fr ? ' et ' : ' and ') + parts[parts.length-1];
+    forSuffix = fr ? ` Pour ${joined}.` : ` For ${joined}.`;
+  } else if(timerContexts.some(c=>c.isExtra)){
+    // All exams but some/all are extra time
+    const extras = [...new Set(timerContexts.filter(c=>c.isExtra).map(c=>c.timerLabel))];
+    const extraStr = extras.join(fr?' et ':' and ');
+    forSuffix = fr ? ` Temps supplémentaire de ${extraStr}.` : ` Extra time of ${extraStr}.`;
   }
-  // Beep complement (works on desktop, may be silent on iOS — that's OK, speech covers it)
+
+  return base + forSuffix;
+}
+
+function buildEndText(exam, timer){
+  const fr = announceLang === 'fr';
+  const totalRunning = exams.filter(e=>e.status==='running').length;
+  const isExtra = timer.label !== 'Principal';
+  const needsName = totalRunning > 1 || isExtra;
+
+  let base = fr ? "Le temps est écoulé." : "Time is up.";
+  let suffix = '';
+
+  if(needsName){
+    if(totalRunning > 1 && isExtra){
+      suffix = fr
+        ? ` Pour ${exam.title}, temps supplémentaire de ${timer.label}.`
+        : ` For ${exam.title}, extra time of ${timer.label}.`;
+    } else if(totalRunning > 1){
+      suffix = fr ? ` Pour ${exam.title}.` : ` For ${exam.title}.`;
+    } else {
+      // Same exam, extra time
+      suffix = fr
+        ? ` Temps supplémentaire de ${timer.label}.`
+        : ` Extra time of ${timer.label}.`;
+    }
+  }
+  return base + suffix;
+}
+
+function buildReadingStartText(exam){
+  const fr = announceLang === 'fr';
+  const totalRunning = exams.filter(e=>e.status==='reading'||e.status==='running').length;
+  if(totalRunning > 1){
+    return fr
+      ? `Le temps de lecture commence maintenant pour ${exam.title}.`
+      : `Reading time starts now for ${exam.title}.`;
+  }
+  return fr
+    ? "Le temps de lecture commence maintenant."
+    : "Your reading time starts now.";
+}
+
+function buildExamStartText(exam){
+  const fr = announceLang === 'fr';
+  const totalRunning = exams.filter(e=>e.status==='running').length;
+  if(totalRunning > 1){
+    return fr ? `L'examen ${exam.title} commence.` : `${exam.title} has started.`;
+  }
+  return fr ? "L'examen commence." : "The exam has started.";
+}
+
+// ── ALERT SOUNDS → speech first, beep as complement ──
+function alertSound(text){
+  if(silentMode)return;
+  announce(text, announceLang);
   beep(880,.18); setTimeout(()=>beep(1100,.18),220);
 }
-function alert30Sound(minutes){
+function alert30Sound(text){
   if(silentMode||!alert30Enabled)return;
-  if(minutes !== undefined){
-    announce(alertText(minutes), announceLang);
-  }
+  announce(text, announceLang);
   beep(660,.14); setTimeout(()=>beep(780,.14),170);
 }
-function endSound(){
+function endSound(text){
   if(silentMode)return;
-  const txt = announceLang==='en' ? 'Time is up.' : 'Le temps est écoulé.';
-  announce(txt, announceLang);
+  announce(text, announceLang);
   beep(660,.2); setTimeout(()=>beep(880,.2),250); setTimeout(()=>beep(1100,.35),500);
 }
-function startExamSound(){
+function startReadingSound(exam){
   if(silentMode)return;
-  const txt = announceLang==='en' ? 'Exam has started.' : "L'examen commence.";
-  announce(txt, announceLang);
+  announce(buildReadingStartText(exam), announceLang);
+  beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360);
+}
+function startExamSound(exam){
+  if(silentMode)return;
+  announce(buildExamStartText(exam), announceLang);
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360); setTimeout(()=>beep(1047,.3),540);
 }
 
@@ -660,10 +748,11 @@ function launchExam(examId){
   if(exam.readingOn){
     exam.status='reading';
     renderExamCol(exam);
+    setTimeout(()=>startReadingSound(exam), 100);
   } else {
     exam.status='running';
     renderExamCol(exam);
-    startExamSound();
+    setTimeout(()=>startExamSound(exam), 100);
   }
   ensureInterval();
   refreshGlobalControls();
@@ -676,7 +765,13 @@ function launchAllWaiting(){
     if(e.readingOn){e.status='reading';renderExamCol(e);}
     else{e.status='running';renderExamCol(e);}
   });
-  if(waiting.some(e=>e.status==='running')||waiting.some(e=>e.readingOn===false))startExamSound();
+  // Announce each exam (staggered slightly if multiple)
+  waiting.forEach((e,i)=>{
+    setTimeout(()=>{
+      if(e.status==='reading') startReadingSound(e);
+      else startExamSound(e);
+    }, i*1500);
+  });
   ensureInterval();
   refreshGlobalControls();
 }
@@ -830,29 +925,64 @@ function refreshAdjustLiveValues(){
 // ── TICK ──
 function tick(){
   if(paused)return;
+
+  // Collect alerts to batch per threshold
+  const alert30Batch=[]; // {examTitle, timerLabel, isExtra, minutes}
+  const alertBatch=[];   // same
+  const endBatch=[];     // {exam, timer}
+
   exams.forEach(exam=>{
     if(exam.status==='reading'){
       exam.readingLeft--;
-      if(exam.readingLeft<=alertSecs&&!exam.readingAlerted){exam.readingAlerted=true;alertSound(Math.round(exam.readingLeft/60));}
+      if(exam.readingLeft<=alertSecs&&!exam.readingAlerted){
+        exam.readingAlerted=true;
+        alertBatch.push({examTitle:exam.title,timerLabel:'Principal',isExtra:false,minutes:Math.round(exam.readingLeft/60)});
+      }
       if(exam.readingLeft<=0){
-        exam.status='running';exam.readingLeft=0;endSound();
+        exam.status='running'; exam.readingLeft=0;
         renderExamCol(exam);
-        setTimeout(startExamSound,200);
         refreshGlobalControls();
+        setTimeout(()=>startExamSound(exam), 200);
       }
     } else if(exam.status==='running'){
       exam.timers.forEach(t=>{
         if(t.done)return;
         if(t.left>0){
           t.left--;
-          if(t.left<=ALERT_30&&!t.alerted30){t.alerted30=true;alert30Sound(Math.round(t.left/60));}
-          if(t.left<=alertSecs&&!t.alerted){t.alerted=true;alertSound(Math.round(t.left/60));}
-          if(t.left===0&&!t.endAlerted){t.endAlerted=true;t.done=true;endSound();}
+          const isExtra = t.label !== 'Principal';
+          if(t.left<=ALERT_30&&!t.alerted30){
+            t.alerted30=true;
+            alert30Batch.push({examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60)});
+          }
+          if(t.left<=alertSecs&&!t.alerted){
+            t.alerted=true;
+            alertBatch.push({examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60)});
+          }
+          if(t.left===0&&!t.endAlerted){
+            t.endAlerted=true; t.done=true;
+            endBatch.push({exam,timer:t});
+          }
         }
       });
     }
-    // waiting exams: do nothing
   });
+
+  // Fire batched alerts (use the minutes from first item — they're all the same threshold)
+  if(alert30Batch.length>0){
+    const mins=alert30Batch[0].minutes;
+    alert30Sound(buildAlertText(mins, alert30Batch));
+  }
+  if(alertBatch.length>0){
+    const mins=alertBatch[0].minutes;
+    // Stagger slightly if both fired same tick
+    const delay=alert30Batch.length>0?2000:0;
+    setTimeout(()=>alertSound(buildAlertText(mins, alertBatch)), delay);
+  }
+  // End sounds — stagger if multiple finish same tick
+  endBatch.forEach(({exam,timer},i)=>{
+    setTimeout(()=>endSound(buildEndText(exam,timer)), i*2500);
+  });
+
   refreshTimers();
   const anyActive=exams.some(e=>
     e.status==='reading' ||
