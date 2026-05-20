@@ -527,33 +527,46 @@ function splitIntoChunks(text, maxLen=200){
 }
 
 // Speak chunks sequentially, re-triggering to dodge the Chrome 15s bug
-function speakChunks(chunks, langCode, voice, idx=0){
-  if(idx >= chunks.length) return;
-  const u = new SpeechSynthesisUtterance(chunks[idx]);
-  u.lang   = langCode === 'en' ? 'en-GB' : 'fr-FR';
-  u.rate   = 0.95;
-  u.pitch  = 1;
-  u.volume = 1;
-  if(voice) u.voice = voice;
-  // Chrome keepalive: re-call speak before the 15s limit on each chunk end
-  u.onend = () => speakChunks(chunks, langCode, voice, idx+1);
+// Speech queue — prevents overlapping announcements
+let _speechQueue=[];
+let _speechBusy=false;
+
+function _processQueue(){
+  if(_speechBusy||_speechQueue.length===0)return;
+  _speechBusy=true;
+  const {chunks,langCode,voice}=_speechQueue.shift();
+  _speakChunksQueued(chunks,langCode,voice,0);
+}
+function _speakChunksQueued(chunks,langCode,voice,idx){
+  if(idx>=chunks.length){
+    _speechBusy=false;
+    setTimeout(_processQueue,120);
+    return;
+  }
+  const u=new SpeechSynthesisUtterance(chunks[idx]);
+  u.lang=langCode==='en'?'en-GB':'fr-FR';u.rate=0.95;u.pitch=1;u.volume=1;
+  if(voice)u.voice=voice;
+  u.onend=()=>_speakChunksQueued(chunks,langCode,voice,idx+1);
+  u.onerror=()=>{_speechBusy=false;setTimeout(_processQueue,120);};
   window.speechSynthesis.speak(u);
 }
 
-function announce(text){
-  if(silentMode || !window.speechSynthesis || !text) return;
-  window.speechSynthesis.cancel();
-  const voice = selectedVoice || (() => {
-    // Auto-pick best voice for language
-    const voices = window.speechSynthesis.getVoices();
-    const langPrefix = announceLang === 'fr' ? 'fr' : 'en';
-    return voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix) && v.localService)
-        || voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix))
-        || null;
+function announce(text,{interrupt=false}={}){
+  if(silentMode||!window.speechSynthesis||!text)return;
+  const voice=selectedVoice||(()=>{
+    const voices=window.speechSynthesis.getVoices();
+    const langPrefix=announceLang==='fr'?'fr':'en';
+    return voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix)&&v.localService)
+        ||voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix))||null;
   })();
-  const chunks = splitIntoChunks(text);
-  // Slight delay after cancel() for iOS
-  setTimeout(()=> speakChunks(chunks, announceLang, voice), 80);
+  const chunks=splitIntoChunks(text);
+  if(interrupt){
+    _speechQueue=[];
+    window.speechSynthesis.cancel();
+    _speechBusy=false;
+  }
+  _speechQueue.push({chunks,langCode:announceLang,voice});
+  setTimeout(_processQueue,interrupt?80:0);
 }
 
 // ── AUDIO (beep fallback for desktop) ──
@@ -731,17 +744,17 @@ function buildExamStartText(examList){
 // ── ALERT SOUNDS ──
 function alertSound(text){
   if(silentMode)return;
-  announce(text);
+  announce(text,{interrupt:true});
   beep(880,.18); setTimeout(()=>beep(1100,.18),220);
 }
 function alert30Sound(text){
   if(silentMode||!alert30Enabled)return;
-  announce(text);
+  announce(text,{interrupt:true});
   beep(660,.14); setTimeout(()=>beep(780,.14),170);
 }
 function endSound(text){
   if(silentMode)return;
-  announce(text);
+  announce(text,{interrupt:true});
   beep(660,.2); setTimeout(()=>beep(880,.2),250); setTimeout(()=>beep(1100,.35),500);
 }
 function startReadingSound(examList){
@@ -1080,12 +1093,9 @@ function tick(){
     }
   });
 
-  // Reading end + exam start as one combined announcement
   if(readingEndBatch.length>0){
-    setTimeout(()=>{
-      endReadingSound(readingEndBatch);
-      setTimeout(()=>startExamSound(examStartBatch), 1500);
-    }, 0);
+    endReadingSound(readingEndBatch);
+    startExamSound(examStartBatch); // queued, plays after endReadingSound finishes
   }
   // Fire batched alerts — each is already one complete sentence
   if(alert30Batch.length>0){
