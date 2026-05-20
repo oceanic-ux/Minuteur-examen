@@ -246,6 +246,12 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
             style="padding:5px 14px;border-radius:7px;border:1px solid #d0cdc6;background:#fff;color:#666;cursor:pointer;font-size:13px;font-family:inherit">EN</button>
         </div>
       </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <label style="font-size:13px;color:#666;flex:1">Voix</label>
+        <select id="voice-select" style="flex:1;max-width:220px;padding:6px 8px;border:1px solid #d0cdc6;border-radius:8px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none">
+          <option value="">Voix par défaut</option>
+        </select>
+      </div>
     </div>
     <div class="option-row" id="silence-row" onclick="toggleSilence()">
       <div class="option-row-text">
@@ -444,26 +450,56 @@ function setArc(tid,left,total,state,r){
   el.style.stroke={normal:'#3a7bd5',near30:'#1a5abf',warning:'#c0392b',done:'#e8e6e0'}[state]||'#3a7bd5';
 }
 
-// ── SOUNDS ──
-// ── AUDIO ──
-// ── LANGUAGE ──
+// ── LANGUAGE & VOICE ──
 let announceLang = 'fr';
+let selectedVoice = null;
+
 function setLang(l){
   announceLang = l;
-  document.getElementById('lang-fr').style.background = l==='fr'?'#3a7bd5':'#fff';
-  document.getElementById('lang-fr').style.color      = l==='fr'?'#fff':'#666';
-  document.getElementById('lang-fr').style.borderColor= l==='fr'?'#3a7bd5':'#d0cdc6';
-  document.getElementById('lang-en').style.background = l==='en'?'#3a7bd5':'#fff';
-  document.getElementById('lang-en').style.color      = l==='en'?'#fff':'#666';
-  document.getElementById('lang-en').style.borderColor= l==='en'?'#3a7bd5':'#d0cdc6';
+  ['fr','en'].forEach(code=>{
+    const btn=document.getElementById('lang-'+code);
+    if(!btn)return;
+    btn.style.background    = l===code?'#3a7bd5':'#fff';
+    btn.style.color         = l===code?'#fff':'#666';
+    btn.style.borderColor   = l===code?'#3a7bd5':'#d0cdc6';
+    btn.style.fontWeight    = l===code?'500':'400';
+  });
+  selectedVoice = null; // reset voice when language changes
+  populateVoices();
+}
+
+function populateVoices(){
+  if(!window.speechSynthesis) return;
+  const voices = window.speechSynthesis.getVoices();
+  if(!voices.length) return;
+  const sel = document.getElementById('voice-select');
+  if(!sel) return;
+  const langPrefix = announceLang === 'fr' ? 'fr' : 'en';
+  const filtered = voices.filter(v => v.lang.toLowerCase().startsWith(langPrefix));
+  sel.innerHTML = '<option value="">Voix par défaut</option>';
+  filtered.forEach((v,i)=>{
+    const opt = document.createElement('option');
+    opt.value = v.name;
+    opt.textContent = `${v.name} (${v.lang})`;
+    sel.appendChild(opt);
+  });
+  sel.onchange = ()=>{
+    const name = sel.value;
+    selectedVoice = name ? voices.find(v=>v.name===name) || null : null;
+  };
+}
+
+// Voices load asynchronously — populate when ready
+if(window.speechSynthesis){
+  window.speechSynthesis.onvoiceschanged = populateVoices;
+  // Some browsers already have voices
+  populateVoices();
 }
 
 // ── SPEECH SYNTHESIS ──
-// Warm up speechSynthesis on first user gesture (required by iOS)
 let _speechReady = false;
 function warmUpSpeech(){
   if(_speechReady || !window.speechSynthesis) return;
-  // Speak a silent utterance to unlock the API
   const u = new SpeechSynthesisUtterance('');
   u.volume = 0;
   u.onend = () => { _speechReady = true; };
@@ -472,17 +508,52 @@ function warmUpSpeech(){
 document.addEventListener('touchstart', warmUpSpeech, {once: true});
 document.addEventListener('mousedown',  warmUpSpeech, {once: true});
 
-function announce(text, lang){
-  if(silentMode || !window.speechSynthesis) return;
-  // Cancel any ongoing speech
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang  = lang === 'en' ? 'en-GB' : 'fr-FR';
-  u.rate  = 0.95;
-  u.pitch = 1;
+// Split text into chunks at sentence boundaries to avoid Chrome's 15s cutoff
+function splitIntoChunks(text, maxLen=200){
+  // Split at sentence-ending punctuation followed by space
+  const sentences = text.match(/[^.!?]+[.!?]+[\s]*/g) || [text];
+  const chunks = [];
+  let current = '';
+  sentences.forEach(s=>{
+    if((current+s).length > maxLen && current.length > 0){
+      chunks.push(current.trim());
+      current = s;
+    } else {
+      current += s;
+    }
+  });
+  if(current.trim()) chunks.push(current.trim());
+  return chunks.length ? chunks : [text];
+}
+
+// Speak chunks sequentially, re-triggering to dodge the Chrome 15s bug
+function speakChunks(chunks, langCode, voice, idx=0){
+  if(idx >= chunks.length) return;
+  const u = new SpeechSynthesisUtterance(chunks[idx]);
+  u.lang   = langCode === 'en' ? 'en-GB' : 'fr-FR';
+  u.rate   = 0.95;
+  u.pitch  = 1;
   u.volume = 1;
-  // iOS sometimes needs a tiny delay after cancel()
-  setTimeout(() => window.speechSynthesis.speak(u), 80);
+  if(voice) u.voice = voice;
+  // Chrome keepalive: re-call speak before the 15s limit on each chunk end
+  u.onend = () => speakChunks(chunks, langCode, voice, idx+1);
+  window.speechSynthesis.speak(u);
+}
+
+function announce(text){
+  if(silentMode || !window.speechSynthesis || !text) return;
+  window.speechSynthesis.cancel();
+  const voice = selectedVoice || (() => {
+    // Auto-pick best voice for language
+    const voices = window.speechSynthesis.getVoices();
+    const langPrefix = announceLang === 'fr' ? 'fr' : 'en';
+    return voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix) && v.localService)
+        || voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix))
+        || null;
+  })();
+  const chunks = splitIntoChunks(text);
+  // Slight delay after cancel() for iOS
+  setTimeout(()=> speakChunks(chunks, announceLang, voice), 80);
 }
 
 // ── AUDIO (beep fallback for desktop) ──
@@ -556,8 +627,7 @@ function buildAlertText(minutes, timerContexts){
   }).filter(Boolean);
 
   if(parts.length === 0) return base;
-  const joined = parts.length === 1 ? parts[0]
-    : parts.slice(0,-1).join(', ') + (fr?' et ':' and ') + parts[parts.length-1];
+  const joined = joinList(parts, fr);
   return base + (fr ? ` Pour ${joined}.` : ` For ${joined}.`);
 }
 
@@ -586,9 +656,55 @@ function buildEndText(exam, timer){
   return base + suffix;
 }
 
+function buildCombinedEndText(endBatch){
+  const fr = announceLang === 'fr';
+  const multipleExams = exams.filter(e=>e.status==='running').length > 1;
+  const base = fr ? "Le temps est écoulé." : "Time is up.";
+
+  if(endBatch.length === 0) return base;
+
+  // Check if all running timers finished at once
+  const totalTimers = exams.filter(e=>e.status==='running').reduce((n,e)=>n+e.timers.length,0);
+  const allDone = endBatch.length >= totalTimers;
+  const anyExtra = endBatch.some(({timer})=>timer.label !== 'Principal');
+
+  if(allDone && !anyExtra && !multipleExams) return base;
+  if(allDone && !anyExtra) return base; // all exams, all timers, no extras
+
+  // Build per-exam groups: examTitle → [extraLabels]
+  const groups = {};
+  endBatch.forEach(({exam,timer})=>{
+    if(!groups[exam.title]) groups[exam.title]=[];
+    if(timer.label !== 'Principal') groups[exam.title].push(timer.label);
+  });
+
+  const parts = Object.entries(groups).map(([title, extras])=>{
+    if(!multipleExams){
+      // Single exam — only mention extras
+      if(extras.length===0) return null;
+      const extraStr = joinList(extras, fr);
+      return fr ? `temps supplémentaire de ${extraStr}` : `extra time of ${extraStr}`;
+    } else {
+      if(extras.length===0) return title;
+      const extraStr = joinList(extras, fr);
+      return fr ? `${title}, temps supplémentaire de ${extraStr}` : `${title}, extra time of ${extraStr}`;
+    }
+  }).filter(Boolean);
+
+  if(parts.length===0) return base;
+  const joined = joinList(parts, fr);
+  return base + (fr ? ` Pour ${joined}.` : ` For ${joined}.`);
+}
+
+// Helper: join list with Oxford-style comma
+function joinList(arr, fr){
+  if(arr.length===1) return arr[0];
+  const conj = fr ? ' et ' : ' and ';
+  return arr.slice(0,-1).join(', ') + conj + arr[arr.length-1];
+}
+
 function buildReadingStartText(exam){
   const fr = announceLang === 'fr';
-  const totalRunning = exams.filter(e=>e.status==='reading'||e.status==='running').length;
   if(totalRunning > 1){
     return fr
       ? `Le temps de lecture commence maintenant pour ${exam.title}.`
@@ -608,30 +724,30 @@ function buildExamStartText(exam){
   return fr ? "L'examen commence." : "The exam has started.";
 }
 
-// ── ALERT SOUNDS → speech first, beep as complement ──
+// ── ALERT SOUNDS ──
 function alertSound(text){
   if(silentMode)return;
-  announce(text, announceLang);
+  announce(text);
   beep(880,.18); setTimeout(()=>beep(1100,.18),220);
 }
 function alert30Sound(text){
   if(silentMode||!alert30Enabled)return;
-  announce(text, announceLang);
+  announce(text);
   beep(660,.14); setTimeout(()=>beep(780,.14),170);
 }
 function endSound(text){
   if(silentMode)return;
-  announce(text, announceLang);
+  announce(text);
   beep(660,.2); setTimeout(()=>beep(880,.2),250); setTimeout(()=>beep(1100,.35),500);
 }
 function startReadingSound(exam){
   if(silentMode)return;
-  announce(buildReadingStartText(exam), announceLang);
+  announce(buildReadingStartText(exam));
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360);
 }
 function startExamSound(exam){
   if(silentMode)return;
-  announce(buildExamStartText(exam), announceLang);
+  announce(buildExamStartText(exam));
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360); setTimeout(()=>beep(1047,.3),540);
 }
 
@@ -961,21 +1077,23 @@ function tick(){
     }
   });
 
-  // Fire batched alerts (use the minutes from first item — they're all the same threshold)
+  // Fire batched alerts — each is already one complete sentence
   if(alert30Batch.length>0){
-    const mins=alert30Batch[0].minutes;
-    alert30Sound(buildAlertText(mins, alert30Batch));
+    alert30Sound(buildAlertText(alert30Batch[0].minutes, alert30Batch));
   }
   if(alertBatch.length>0){
-    const mins=alertBatch[0].minutes;
-    // Stagger slightly if both fired same tick
-    const delay=alert30Batch.length>0?2000:0;
-    setTimeout(()=>alertSound(buildAlertText(mins, alertBatch)), delay);
+    // Stagger if both thresholds fired same tick so they don't overlap
+    const delay=alert30Batch.length>0?3000:0;
+    setTimeout(()=>alertSound(buildAlertText(alertBatch[0].minutes, alertBatch)), delay);
   }
-  // End sounds — stagger if multiple finish same tick
-  endBatch.forEach(({exam,timer},i)=>{
-    setTimeout(()=>endSound(buildEndText(exam,timer)), i*2500);
-  });
+  // Combine all end announcements into one sentence
+  if(endBatch.length>0){
+    const delay=(alert30Batch.length||alertBatch.length)?4000:0;
+    setTimeout(()=>{
+      const text=buildCombinedEndText(endBatch);
+      endSound(text);
+    }, delay);
+  }
 
   refreshTimers();
   const anyActive=exams.some(e=>
