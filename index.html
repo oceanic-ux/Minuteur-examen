@@ -108,6 +108,9 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
 .t-display.warning{color:#c0392b}
 .t-display.done-txt{color:#ccc}
 .t-display.greyed{color:#aaa}
+.speaking-dot{position:absolute;top:-4px;right:-4px;width:20px;height:20px;border-radius:50%;background:#3a7bd5;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.2);animation:speakPulse 1s ease-in-out infinite;}
+.speaking-dot.active{opacity:1;}
+@keyframes speakPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.2);}}
 .t-total{font-size:11px;color:#ccc;margin-top:2px}
 .done-badge{display:inline-block;font-size:9px;font-weight:600;background:#e8e6e0;color:#999;border-radius:99px;padding:2px 7px;margin-left:5px;vertical-align:2px}
 .milestones{margin-top:5px;display:flex;flex-direction:column;gap:3px}
@@ -352,6 +355,7 @@ function toggleAlert30(){
   alert30Enabled=!alert30Enabled;
   const sw=document.getElementById('sw-alert30');
   if(sw)sw.classList.toggle('on',alert30Enabled);
+  savePrefs();
 }
 
 function addExam(){
@@ -361,7 +365,7 @@ function addExam(){
     if(el)def.title=el.value;
   });
   const eid=nextExamId++;
-  examDefs.push({id:eid,title:'',tog:{main:true,t25:true,t50:true},p1:'25%',p2:'50%'});
+  examDefs.push({id:eid,title:'',tog:{main:true,t25:true,t50:true},p1:'25%',p2:'50%',ibType:'ns',readingOn:true});
   renderExamList();
 }
 function removeExam(eid){
@@ -414,8 +418,21 @@ function renderExamList(){
             onclick="event.stopPropagation()" oninput="examDefs.find(e=>e.id===${def.id}).p2=this.value">
         </div>
       </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;background:#f8f6f2;border-radius:8px;cursor:pointer"
+           onclick="toggleExamReading(${def.id})">
+        <span style="font-size:13px;color:#666;flex:1">Temps de lecture${def.readingOn!==false?' ✓':'  —'}</span>
+        <div class="sw${def.readingOn!==false?' on':''}" id="sw-reading-${def.id}"></div>
+      </div>
     </div>`).join('');
   checkStart();
+}
+
+function toggleExamReading(eid){
+  const def=examDefs.find(e=>e.id===eid);if(!def)return;
+  def.readingOn=def.readingOn===false;
+  const sw=document.getElementById('sw-reading-'+eid);
+  const lbl=document.querySelector(`#ecard-${eid} .reading-per-exam-label`);
+  if(sw)sw.classList.toggle('on',def.readingOn!==false);
 }
 function checkStart(){
   const btn=document.getElementById('start-btn');
@@ -431,7 +448,7 @@ function checkStart(){
 // ── LOGO / SVG ──
 function makeLogo(size){return`<img src="Haut-Lac-logo.svg" width="${size}" height="${size}" alt="Haut-Lac" style="display:block;object-fit:contain;pointer-events:none">`;}
 function makeSVG(r,tid,strokeColor){
-  const c=r+9,sz=(r+9)*2,circ=(2*Math.PI*r).toFixed(2),sc=strokeColor||'#3a7bd5';
+  const c=r+9,sz=(r+9)*2,circ=(2*Math.PI*r).toFixed(2),sc=strokeColor||'#1a1a18';
   const ld=Math.max(16,Math.round((r-7)*2*0.82));
   return`<div style="position:relative;width:${sz}px;height:${sz}px;flex-shrink:0">
     <svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="transform:rotate(-90deg);position:absolute;top:0;left:0">
@@ -441,13 +458,14 @@ function makeSVG(r,tid,strokeColor){
         style="transition:stroke-dashoffset .9s linear,stroke .3s"/>
     </svg>
     <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">${makeLogo(ld)}</div>
+    <div class="speaking-dot" id="speak-dot-${tid}">🔊</div>
   </div>`;}
 function timerState(t){if(t.done)return'done';if(t.left<=alertSecs)return'warning';if(t.left<=ALERT_30)return'near30';return'normal';}
 function setArc(tid,left,total,state,r){
   const el=document.getElementById('arc-'+tid);if(!el)return;
   const circ=2*Math.PI*r;
   el.style.strokeDashoffset=(circ*Math.max(0,1-(total>0?left/total:0))).toFixed(2);
-  el.style.stroke={normal:'#3a7bd5',near30:'#1a5abf',warning:'#c0392b',done:'#e8e6e0'}[state]||'#3a7bd5';
+  el.style.stroke={normal:'#1a1a18',near30:'#1a5abf',warning:'#c0392b',done:'#e8e6e0'}[state]||'#1a1a18';
 }
 
 // ── LANGUAGE & VOICE ──
@@ -466,6 +484,7 @@ function setLang(l){
   });
   selectedVoice = null; // reset voice when language changes
   populateVoices();
+  savePrefs();
 }
 
 function populateVoices(){
@@ -497,76 +516,93 @@ if(window.speechSynthesis){
 }
 
 // ── SPEECH SYNTHESIS ──
-let _speechReady = false;
-function warmUpSpeech(){
-  if(_speechReady || !window.speechSynthesis) return;
-  const u = new SpeechSynthesisUtterance('');
-  u.volume = 0;
-  u.onend = () => { _speechReady = true; };
-  window.speechSynthesis.speak(u);
-}
-document.addEventListener('touchstart', warmUpSpeech, {once: true});
-document.addEventListener('mousedown',  warmUpSpeech, {once: true});
+let _speechQueue=[], _speechBusy=false, _speechWatchdog=null;
 
-// Split text into chunks at sentence boundaries to avoid Chrome's 15s cutoff
-function splitIntoChunks(text, maxLen=200){
-  // Split at sentence-ending punctuation followed by space
-  const sentences = text.match(/[^.!?]+[.!?]+[\s]*/g) || [text];
-  const chunks = [];
-  let current = '';
-  sentences.forEach(s=>{
-    if((current+s).length > maxLen && current.length > 0){
-      chunks.push(current.trim());
-      current = s;
-    } else {
-      current += s;
-    }
-  });
-  if(current.trim()) chunks.push(current.trim());
-  return chunks.length ? chunks : [text];
+function _resetSpeech(){
+  _speechBusy=false;
+  if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}
 }
 
-// Speak chunks sequentially, re-triggering to dodge the Chrome 15s bug
-// Speech queue — prevents overlapping announcements
-let _speechQueue=[];
-let _speechBusy=false;
+// ── SPEAKING INDICATOR ──
+let _speakingDots=new Set();
+function showSpeaking(examIds, timerIds){
+  hideSpeaking();
+  if(timerIds&&timerIds.length>0){
+    timerIds.forEach(tid=>{const el=document.getElementById('speak-dot-'+tid);if(el){el.classList.add('active');_speakingDots.add(tid);}});
+  } else {
+    const targets=examIds?exams.filter(e=>examIds.includes(e.id)):exams.filter(e=>e.status==='running'||e.status==='reading');
+    targets.forEach(exam=>{exam.timers.forEach(ti=>{const el=document.getElementById('speak-dot-'+ti.id);if(el){el.classList.add('active');_speakingDots.add(ti.id);}});});
+  }
+}
+function hideSpeaking(){
+  _speakingDots.forEach(id=>{const el=document.getElementById('speak-dot-'+id);if(el)el.classList.remove('active');});
+  _speakingDots.clear();
+}
 
 function _processQueue(){
-  if(_speechBusy||_speechQueue.length===0)return;
+  if(_speechBusy||_speechQueue.length===0){if(!_speechBusy)hideSpeaking();return;}
+  if(!window.speechSynthesis)return;
   _speechBusy=true;
-  const {chunks,langCode,voice}=_speechQueue.shift();
+  const {chunks,langCode,voice,examIds,timerIds}=_speechQueue.shift();
+  showSpeaking(examIds||null,timerIds||null);
   _speakChunksQueued(chunks,langCode,voice,0);
 }
 function _speakChunksQueued(chunks,langCode,voice,idx){
-  if(idx>=chunks.length){
-    _speechBusy=false;
-    setTimeout(_processQueue,120);
-    return;
-  }
+  if(idx>=chunks.length){_resetSpeech();setTimeout(_processQueue,150);return;}
+  if(!window.speechSynthesis){_resetSpeech();return;}
   const u=new SpeechSynthesisUtterance(chunks[idx]);
   u.lang=langCode==='en'?'en-GB':'fr-FR';u.rate=0.95;u.pitch=1;u.volume=1;
   if(voice)u.voice=voice;
-  u.onend=()=>_speakChunksQueued(chunks,langCode,voice,idx+1);
-  u.onerror=()=>{_speechBusy=false;setTimeout(_processQueue,120);};
-  window.speechSynthesis.speak(u);
+  u.onend=()=>{if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}_speakChunksQueued(chunks,langCode,voice,idx+1);};
+  u.onerror=()=>{_resetSpeech();hideSpeaking();setTimeout(_processQueue,150);};
+  _speechWatchdog=setTimeout(()=>{_resetSpeech();hideSpeaking();setTimeout(_processQueue,150);},30000);
+  try{window.speechSynthesis.speak(u);}catch(e){_resetSpeech();hideSpeaking();}
 }
 
-function announce(text,{interrupt=false}={}){
+let _warmingUp=false;
+function warmUpSpeech(){
+  if(!window.speechSynthesis||_warmingUp)return;
+  _warmingUp=true;
+  try{
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance('\u200B');
+    u.volume=0;
+    u.onend=u.onerror=()=>{_warmingUp=false;};
+    window.speechSynthesis.speak(u);
+  }catch(e){_warmingUp=false;}
+}
+document.addEventListener('touchstart',warmUpSpeech,{passive:true});
+document.addEventListener('mousedown',warmUpSpeech,{passive:true});
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'){
+    _resetSpeech();
+    if(intervalId&&!paused)acquireWakeLock();
+    if(_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{});
+  }
+});
+
+function announce(text,{interrupt=false,examIds=null,timerIds=null}={}){
   if(silentMode||!window.speechSynthesis||!text)return;
+  warmUpSpeech();
   const voice=selectedVoice||(()=>{
-    const voices=window.speechSynthesis.getVoices();
-    const langPrefix=announceLang==='fr'?'fr':'en';
-    return voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix)&&v.localService)
-        ||voices.find(v=>v.lang.toLowerCase().startsWith(langPrefix))||null;
+    const vv=window.speechSynthesis.getVoices();
+    if(announceLang==='en'){
+      return vv.find(v=>v.lang.toLowerCase().startsWith('en-gb')&&v.localService)
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-gb'))
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-us')&&v.localService)
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en'))||null;
+    }
+    return vv.find(v=>v.lang.toLowerCase().startsWith('fr')&&v.localService)
+        ||vv.find(v=>v.lang.toLowerCase().startsWith('fr'))||null;
   })();
   const chunks=splitIntoChunks(text);
   if(interrupt){
     _speechQueue=[];
-    window.speechSynthesis.cancel();
-    _speechBusy=false;
+    try{window.speechSynthesis.cancel();}catch(e){}
+    _resetSpeech();hideSpeaking();
   }
-  _speechQueue.push({chunks,langCode:announceLang,voice});
-  setTimeout(_processQueue,interrupt?80:0);
+  _speechQueue.push({chunks,langCode:announceLang,voice,examIds,timerIds});
+  setTimeout(_processQueue,interrupt?100:0);
 }
 
 // ── AUDIO (beep fallback for desktop) ──
@@ -601,115 +637,59 @@ function beep(f,d,v=0.3){
 // Build announcement text with exam/timer context
 function buildAlertText(minutes, timerContexts){
   const fr = announceLang === 'fr';
-  const minText = fr
-    ? (minutes <= 1 ? 'une minute' : `${minutes} minutes`)
-    : (minutes <= 1 ? 'one minute' : `${minutes} minutes`);
-  const base = fr ? `Il reste ${minText}.` : `${minutes <= 1 ? 'One minute' : minText} remaining.`;
-
-  if(!timerContexts || timerContexts.length === 0) return base;
-
+  const minText = fr ? (minutes<=1?'une minute':`${minutes} minutes`) : (minutes<=1?'one minute':`${minutes} minutes`);
+  const base = fr ? `Il reste ${minText}.` : `${minutes<=1?'One minute':minText} remaining.`;
+  if(!timerContexts||timerContexts.length===0) return base;
   const runningExams = exams.filter(e=>e.status==='running');
-  const multipleExams = runningExams.length > 1;
-
-  // Count all active (non-done) timers across running exams
   const totalActiveTimers = runningExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length, 0);
-  const allTimersAlerted = timerContexts.length === totalActiveTimers;
-
-  // Only add suffix if there are multiple exams OR it's an extra-time timer
   const hasExtra = timerContexts.some(c=>c.isExtra);
-  if(!multipleExams && !hasExtra) return base;
-
-  // If all active timers are alerting and none are extra → no suffix needed even with multiple exams
-  if(allTimersAlerted && !hasExtra) return base;
-
-  // Build per-exam groups
+  if(runningExams.length<=1 && !hasExtra) return base;
+  if(timerContexts.length===totalActiveTimers && !hasExtra) return base;
   const examGroups = {};
-  timerContexts.forEach(({examTitle, timerLabel, isExtra})=>{
+  timerContexts.forEach(({examTitle,timerLabel,isExtra})=>{
     if(!examGroups[examTitle]) examGroups[examTitle]=[];
     if(isExtra) examGroups[examTitle].push(timerLabel);
   });
-
-  const parts = Object.entries(examGroups).map(([title, extras])=>{
-    if(extras.length > 0){
-      const extraStr = extras.join(fr?' et ':' and ');
-      return multipleExams
-        ? (fr ? `${title}, temps supplémentaire de ${extraStr}` : `${title}, extra time of ${extraStr}`)
-        : (fr ? `temps supplémentaire de ${extraStr}` : `extra time of ${extraStr}`);
+  const allExamsCovered = Object.keys(examGroups).length >= runningExams.length;
+  const parts = Object.entries(examGroups).map(([title,extras])=>{
+    if(allExamsCovered){
+      return extras.length ? (fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`) : null;
     }
-    return multipleExams ? title : '';
+    if(extras.length) return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
   }).filter(Boolean);
-
-  if(parts.length === 0) return base;
-  const joined = joinList(parts, fr);
-  return base + (fr ? ` Pour ${joined}.` : ` For ${joined}.`);
-}
-
-function buildEndText(exam, timer){
-  const fr = announceLang === 'fr';
-  const isExtra = timer.label !== 'Principal';
-  const multipleExams = exams.filter(e=>e.status==='running').length > 1;
-
-  const base = fr ? "Le temps est écoulé." : "Time is up.";
-
-  if(!multipleExams && !isExtra) return base;
-
-  let suffix = '';
-  if(multipleExams && isExtra){
-    suffix = fr
-      ? ` Pour ${exam.title}, temps supplémentaire de ${timer.label}.`
-      : ` For ${exam.title}, extra time of ${timer.label}.`;
-  } else if(multipleExams){
-    suffix = fr ? ` Pour ${exam.title}.` : ` For ${exam.title}.`;
-  } else {
-    // Single exam, extra time only
-    suffix = fr
-      ? ` Temps supplémentaire de ${timer.label}.`
-      : ` Extra time of ${timer.label}.`;
-  }
-  return base + suffix;
+  if(parts.length===0) return base;
+  const prefix1=fr?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `):`For ${joinList(parts,fr)}: `;
+  return prefix1 + base;
 }
 
 function buildCombinedEndText(endBatch){
   const fr = announceLang === 'fr';
-  const multipleExams = exams.filter(e=>e.status==='running').length > 1;
   const base = fr ? "Le temps est écoulé." : "Time is up.";
-
-  if(endBatch.length === 0) return base;
-
-  // Check if all running timers finished at once
-  const totalTimers = exams.filter(e=>e.status==='running').reduce((n,e)=>n+e.timers.length,0);
-  const allDone = endBatch.length >= totalTimers;
-  const anyExtra = endBatch.some(({timer})=>timer.label !== 'Principal');
-
-  if(allDone && !anyExtra && !multipleExams) return base;
-  if(allDone && !anyExtra) return base; // all exams, all timers, no extras
-
-  // Build per-exam groups: examTitle → [extraLabels]
+  if(endBatch.length===0) return base;
+  const runningExams = exams.filter(e=>e.status==='running');
+  const totalTimers = runningExams.reduce((n,e)=>n+e.timers.length, 0);
+  const anyExtra = endBatch.some(({timer})=>timer.label!=='Principal');
+  if(endBatch.length>=totalTimers && !anyExtra) return base;
   const groups = {};
   endBatch.forEach(({exam,timer})=>{
     if(!groups[exam.title]) groups[exam.title]=[];
-    if(timer.label !== 'Principal') groups[exam.title].push(timer.label);
+    if(timer.label!=='Principal') groups[exam.title].push(timer.label);
   });
-
-  const parts = Object.entries(groups).map(([title, extras])=>{
-    if(!multipleExams){
-      // Single exam — only mention extras
-      if(extras.length===0) return null;
-      const extraStr = joinList(extras, fr);
-      return fr ? `temps supplémentaire de ${extraStr}` : `extra time of ${extraStr}`;
-    } else {
-      if(extras.length===0) return title;
-      const extraStr = joinList(extras, fr);
-      return fr ? `${title}, temps supplémentaire de ${extraStr}` : `${title}, extra time of ${extraStr}`;
+  const allExamsCovered = Object.keys(groups).length >= runningExams.length;
+  const parts = Object.entries(groups).map(([title,extras])=>{
+    if(allExamsCovered){
+      return extras.length ? (fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`) : null;
     }
+    if(extras.length) return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
   }).filter(Boolean);
-
   if(parts.length===0) return base;
-  const joined = joinList(parts, fr);
-  return base + (fr ? ` Pour ${joined}.` : ` For ${joined}.`);
+  const prefix2=fr?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `):`For ${joinList(parts,fr)}: `;
+  return prefix2 + base;
 }
 
-// Helper: join list with Oxford-style comma
+// Helper: join list
 function joinList(arr, fr){
   if(arr.length===1) return arr[0];
   const conj = fr ? ' et ' : ' and ';
@@ -718,58 +698,58 @@ function joinList(arr, fr){
 
 function buildReadingStartText(examList){
   const fr=announceLang==='fr';
-  const names=examList.map(e=>e.title).filter(Boolean);
-  if(!names.length||names.every(n=>!n))return fr?"Le temps de lecture commence maintenant.":"Your reading time starts now.";
-  return fr
-    ?`Le temps de lecture commence maintenant pour ${joinList(names,fr)}.`
-    :`Reading time starts now for ${joinList(names,fr)}.`;
+  const base=fr?"Le temps de lecture commence maintenant.":"Your reading time starts now.";
+  const allReading=exams.filter(e=>e.status==='reading');
+  if(examList.length===0||examList.length>=allReading.length)return base;
+  const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
+  return (fr?`Pour ${list} : `:`For ${list}: `)+base;
 }
 function buildReadingEndText(examList){
   const fr=announceLang==='fr';
-  const names=examList.map(e=>e.title).filter(Boolean);
-  if(!names.length||names.every(n=>!n))return fr?"Le temps de lecture est terminé. L'examen commence.":"Reading time is over. The exam begins now.";
-  return fr
-    ?`Le temps de lecture est terminé pour ${joinList(names,fr)}. L'examen commence.`
-    :`Reading time is over for ${joinList(names,fr)}. The exam begins now.`;
+  const base=fr?"Le temps de lecture est terminé. L'examen commence.":"Reading time is over. The exam begins now.";
+  const totalRunning=exams.filter(e=>e.status==='running').length;
+  if(examList.length===0||examList.length>=totalRunning)return base;
+  const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
+  return (fr?`Pour ${list} : `:`For ${list}: `)+base;
 }
 function buildExamStartText(examList){
   const fr=announceLang==='fr';
-  const names=examList.map(e=>e.title).filter(Boolean);
-  if(!names.length||names.every(n=>!n))return fr?"L'examen commence.":"The exam has started.";
-  return fr
-    ?`L'examen commence pour ${joinList(names,fr)}.`
-    :`The exam starts for ${joinList(names,fr)}.`;
+  const base=fr?"L'examen commence.":"The exam has started.";
+  const allRunning=exams.filter(e=>e.status==='running');
+  if(examList.length===0||examList.length>=allRunning.length)return base;
+  const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
+  return (fr?`Pour ${list} : `:`For ${list}: `)+base;
 }
 
 // ── ALERT SOUNDS ──
-function alertSound(text){
+function alertSound(text,examIds,timerIds){
   if(silentMode)return;
-  announce(text,{interrupt:true});
+  announce(text,{interrupt:true,examIds,timerIds});
   beep(880,.18); setTimeout(()=>beep(1100,.18),220);
 }
-function alert30Sound(text){
+function alert30Sound(text,examIds,timerIds){
   if(silentMode||!alert30Enabled)return;
-  announce(text,{interrupt:true});
+  announce(text,{interrupt:true,examIds,timerIds});
   beep(660,.14); setTimeout(()=>beep(780,.14),170);
 }
-function endSound(text){
+function endSound(text,examIds,timerIds){
   if(silentMode)return;
-  announce(text,{interrupt:true});
+  announce(text,{interrupt:true,examIds,timerIds});
   beep(660,.2); setTimeout(()=>beep(880,.2),250); setTimeout(()=>beep(1100,.35),500);
 }
 function startReadingSound(examList){
   if(silentMode)return;
-  announce(buildReadingStartText(examList));
+  announce(buildReadingStartText(examList),{examIds:examList.map(e=>e.id)});
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360);
 }
 function endReadingSound(examList){
   if(silentMode)return;
-  announce(buildReadingEndText(examList));
+  announce(buildReadingEndText(examList),{examIds:examList.map(e=>e.id)});
   beep(784,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(523,.2),360);
 }
 function startExamSound(examList){
   if(silentMode)return;
-  announce(buildExamStartText(examList));
+  announce(buildExamStartText(examList),{examIds:examList.map(e=>e.id)});
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360); setTimeout(()=>beep(1047,.3),540);
 }
 
@@ -793,7 +773,7 @@ function parseRatio(str){
 function buildExamObj(def, readingOnOverride, readingMinsOverride){
   const base=getExamBase(def.id);if(base<=0)return null;
   const title=(document.getElementById('inp-title-'+def.id)?.value||'').trim()||('Examen '+(exams.length+1));
-  const rOn = readingOnOverride !== undefined ? readingOnOverride : readingOn;
+  const rOn = readingOnOverride !== undefined ? readingOnOverride : (def.readingOn !== false);
   const rMins = readingMinsOverride !== undefined ? readingMinsOverride : (parseInt(document.getElementById('inp-reading')?.value)||5);
   const rTotal = rMins*60;
 
@@ -851,6 +831,7 @@ function fmtPercent(r, originalStr){
 function startAll(){
   alertSecs=(parseInt(document.getElementById('inp-alert').value)||5)*60;
   ALERT_30=alert30Enabled?(parseInt(document.getElementById('inp-alert30').value)||30)*60:0;
+  savePrefs();
   exams=[];
   examDefs.forEach(def=>{
     const obj=buildExamObj(def);if(obj)exams.push(obj);
@@ -1078,11 +1059,11 @@ function tick(){
           const isExtra = t.label !== 'Principal';
           if(t.left<=ALERT_30&&!t.alerted30){
             t.alerted30=true;
-            alert30Batch.push({examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60)});
+            alert30Batch.push({exam,examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60),timerId:t.id});
           }
           if(t.left<=alertSecs&&!t.alerted){
             t.alerted=true;
-            alertBatch.push({examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60)});
+            alertBatch.push({exam,examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60),timerId:t.id});
           }
           if(t.left===0&&!t.endAlerted){
             t.endAlerted=true; t.done=true;
@@ -1097,17 +1078,27 @@ function tick(){
     endReadingSound(readingEndBatch);
     startExamSound(examStartBatch); // queued, plays after endReadingSound finishes
   }
-  // Fire batched alerts — each is already one complete sentence
+  // Fire batched alerts
   if(alert30Batch.length>0){
-    alert30Sound(buildAlertText(alert30Batch[0].minutes, alert30Batch));
+    const eIds=[...new Set(alert30Batch.map(x=>x.exam.id))];
+    const tIds=alert30Batch.map(x=>x.timerId).filter(Boolean);
+    alert30Sound(buildAlertText(alert30Batch[0].minutes, alert30Batch), eIds, tIds);
   }
   if(alertBatch.length>0){
     const delay=alert30Batch.length>0?3000:0;
-    setTimeout(()=>alertSound(buildAlertText(alertBatch[0].minutes, alertBatch)), delay);
+    setTimeout(()=>{
+      const eIds=[...new Set(alertBatch.map(x=>x.exam.id))];
+      const tIds=alertBatch.map(x=>x.timerId).filter(Boolean);
+      alertSound(buildAlertText(alertBatch[0].minutes, alertBatch), eIds, tIds);
+    }, delay);
   }
   if(endBatch.length>0){
     const delay=(readingEndBatch.length||alert30Batch.length||alertBatch.length)?4000:0;
-    setTimeout(()=>endSound(buildCombinedEndText(endBatch)), delay);
+    setTimeout(()=>{
+      const eIds=[...new Set(endBatch.map(x=>x.exam.id))];
+      const tIds=endBatch.map(x=>x.timer.id);
+      endSound(buildCombinedEndText(endBatch), eIds, tIds);
+    }, delay);
   }
 
   refreshTimers();
@@ -1458,14 +1449,6 @@ function releaseWakeLock(){
   if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null;}
 }
 // Re-acquire after tab becomes visible again (iOS/mobile releases on hide)
-document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'){
-    if(intervalId&&!paused)acquireWakeLock();
-    if(_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{});
-    warmUpSpeech();
-  }
-});
-
 // ── QUIT ──
 function confirmQuit(){
   if(!confirm('Quitter les minuteurs et revenir aux réglages ?'))return;
@@ -1482,7 +1465,51 @@ function confirmQuit(){
 }
 
 // ── INIT ──
+function savePrefs(){
+  try{
+    localStorage.setItem('hl-prefs',JSON.stringify({
+      announceLang, silentMode, alert30Enabled,
+      alertSecs, ALERT_30,
+      readingOn,
+      defaultP1:examDefs[0]?.p1||'25%',
+      defaultP2:examDefs[0]?.p2||'50%',
+    }));
+  }catch(e){}
+}
+
+(function loadAndApplyPrefs(){
+  try{
+    const p=JSON.parse(localStorage.getItem('hl-prefs')||'{}');
+    if(p.announceLang)announceLang=p.announceLang;
+    if(typeof p.silentMode==='boolean')silentMode=p.silentMode;
+    if(typeof p.alert30Enabled==='boolean')alert30Enabled=p.alert30Enabled;
+    if(p.alertSecs)alertSecs=p.alertSecs;
+    if(p.ALERT_30)ALERT_30=p.ALERT_30;
+    if(typeof p.readingOn==='boolean')readingOn=p.readingOn;
+    if(p.defaultP1)window._defaultP1=p.defaultP1;
+    if(p.defaultP2)window._defaultP2=p.defaultP2;
+  }catch(e){}
+})();
+
 addExam();
+
+(function applyPrefsToUI(){
+  // Announce language buttons
+  setLang(announceLang);
+  // Alert times
+  const ia=document.getElementById('inp-alert');if(ia)ia.value=Math.round(alertSecs/60);
+  const ia30=document.getElementById('inp-alert30');if(ia30)ia30.value=Math.round(ALERT_30/60);
+  // Alert30 toggle
+  const sw30=document.getElementById('sw-alert30');if(sw30)sw30.classList.toggle('on',alert30Enabled);
+  // Silence toggle
+  if(silentMode){const sw=document.getElementById('sw-silence'),row=document.getElementById('silence-row');if(sw)sw.classList.add('on');if(row){row.style.borderColor='#3a7bd5';row.style.background='#eaf1fb';}}
+  // Reading
+  const togRow=document.getElementById('tog-reading'),swRead=document.getElementById('sw-reading'),inpRead=document.getElementById('inp-reading');
+  if(togRow)togRow.classList.toggle('on',readingOn);if(swRead)swRead.classList.toggle('on',readingOn);if(inpRead)inpRead.disabled=!readingOn;
+  // Default extra time
+  if(window._defaultP1)examDefs.forEach(d=>{d.p1=window._defaultP1;d.p2=window._defaultP2||'50%';});
+  renderExamList();
+})();
 </script>
 
   <script>
