@@ -282,6 +282,12 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
           </div>
           <div class="sw" id="sw-ib" onclick="event.stopPropagation();toggleIBMode()"></div>
         </div>
+        <div style="height:1px;background:#c0d4ec;margin:2px 0"></div>
+        <div style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:4px 0" onclick="toggleVoiceSettings()">
+          <div style="flex:1;font-size:13px;font-weight:600;color:#1a4a8a">Personnaliser les annonces</div>
+          <svg style="width:16px;height:16px;stroke:#3a7bd5;fill:none;flex-shrink:0;transition:transform .2s" id="voice-settings-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div id="voice-settings-panel" style="display:none;flex-direction:column;gap:0;margin-top:4px"></div>
       </div>
     </div>
     <button class="start-btn" id="start-btn" onclick="startAll()">
@@ -325,6 +331,7 @@ let readingOn=true, audioMode='beep', alert30Enabled=true, ibMode=false;
 let alertSecs=300;
 let ALERT_30=1800; // configurable, default 30 min
 let paused=false, intervalId=null, clockInterval=null;
+const examPausedSet=new Set();
 let wakeLock=null;
 let examDefs=[], exams=[];
 const RADII=[52,43,36];
@@ -346,6 +353,20 @@ function tickClock(){const el=document.getElementById('live-clock');if(el&&el.st
 function pad(n){return String(n).padStart(2,'0');}
 function fmtTime(s){if(s<0)s=0;const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h>0?h+':'+pad(m)+':'+pad(sc):pad(m)+':'+pad(sc);}
 function fmtHuman(s){if(s<=0)return'0 min';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;if(h>0&&m>0)return h+'h'+pad(m);if(h>0)return h+'h';if(m>0&&sc>0)return m+' min '+sc+' s';if(m>0)return m+' min';return sc+' s';}
+// Spoken duration for announcements
+function fmtSpoken(s,fr=true){
+  if(s<=0)return fr?'zéro minute':'zero minutes';
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
+  if(fr){
+    if(h>0&&m>0)return h+(h>1?' heures':' heure')+' '+m+(m>1?' minutes':' minute');
+    if(h>0)return h+(h>1?' heures':' heure');
+    return m+(m>1?' minutes':' minute');
+  } else {
+    if(h>0&&m>0)return h+(h>1?' hours':' hour')+' '+m+(m>1?' minutes':' minute');
+    if(h>0)return h+(h>1?' hours':' hour');
+    return m+(m>1?' minutes':' minute');
+  }
+}
 function getExamBase(eid){return(parseInt(document.getElementById('inp-h-'+eid).value)||0)*3600+(parseInt(document.getElementById('inp-m-'+eid).value)||0)*60+(parseInt(document.getElementById('inp-s-'+eid).value)||0);}
 function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
@@ -386,58 +407,195 @@ function setAudioMode(mode){
   if(mode==='voice')populateVoices();
   savePrefs();
 }
-function toggleAlert30(){
-  alert30Enabled=!alert30Enabled;
-  const sw=document.getElementById('sw-alert30');
-  if(sw)sw.classList.toggle('on',alert30Enabled);
-  savePrefs();
+let _voiceSettingsOpen=false;
+function toggleVoiceSettings(){
+  _voiceSettingsOpen=!_voiceSettingsOpen;
+  const panel=document.getElementById('voice-settings-panel');
+  const chev=document.getElementById('voice-settings-chevron');
+  if(!panel)return;
+  if(_voiceSettingsOpen){
+    panel.style.display='flex';
+    if(chev)chev.style.transform='rotate(180deg)';
+    buildVoiceSettingsPanel();
+  } else {
+    panel.style.display='none';
+    if(chev)chev.style.transform='';
+  }
 }
 
-// ── IB MODE ──
-function toggleIBMode(){
-  ibMode=!ibMode;
-  const sw=document.getElementById('sw-ib');
-  if(sw)sw.classList.toggle('on',ibMode);
-  renderExamList();
-  savePrefs();
-}
-
-function ibText(type,event,lang,exam,now){
+function buildVoiceSettingsPanel(){
+  const panel=document.getElementById('voice-settings-panel');
+  if(!panel)return;
+  const lang=announceLang;
   const fr=lang==='fr';
-  const dur=fmtHuman(exam.timers.find(ti=>ti.label==='Principal')?.total||0);
-  const heure=now?pad(now.getHours())+' h '+pad(now.getMinutes()):'';
+  const labels=TMPL_LABELS[lang];
+  const tokens=TMPL_TOKENS[lang];
+
+  let html='';
+  TMPL_EVENTS.forEach(function(event){
+    const segs=getTemplate(event);
+    let segsHtml=renderTemplateEditor(event,segs,tokens,fr);
+    let tokenBtns='';
+    tokens.forEach(function(tk){
+      tokenBtns+='<button onclick="addTokenToTemplate(\''+event+'\',\''+tk.id+'\')" '
+        +'style="padding:3px 8px;border:1px solid #3a7bd5;border-radius:6px;background:#fff;color:#3a7bd5;cursor:pointer;font-size:11px;font-family:inherit">'
+        +'+ '+escHtml(tk.label)+'</button>';
+    });
+    tokenBtns+='<button onclick="addTextToTemplate(\''+event+'\')" '
+      +'style="padding:3px 8px;border:1px solid #888;border-radius:6px;background:#fff;color:#555;cursor:pointer;font-size:11px;font-family:inherit">'
+      +'+ Texte</button>';
+    tokenBtns+='<button onclick="resetTemplate(\''+event+'\')" '
+      +'style="padding:3px 8px;border:1px solid #c00;border-radius:6px;background:#fff;color:#c00;cursor:pointer;font-size:11px;font-family:inherit;margin-left:auto">'
+      +'\u21ba D\u00e9faut</button>';
+    html+='<div style="margin-bottom:12px;border:1px solid #c0d4ec;border-radius:8px;padding:8px 10px;background:#f0f6ff">'
+      +'<div style="font-size:12px;font-weight:600;color:#1a4a8a;margin-bottom:6px">'+(labels[event]||event)+'</div>'
+      +'<div id="tmpl-segs-'+event+'" style="display:flex;flex-direction:column;gap:4px">'+segsHtml+'</div>'
+      +'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px">'+tokenBtns+'</div>'
+      +'</div>';
+  });
+  panel.innerHTML=html;
+}
+
+function renderTemplateEditor(event,segs,tokens,fr){
+  let html='';
+  segs.forEach(function(seg,i){
+    if(seg.k){
+      const tk=tokens.find(function(t){return t.id===seg.k;});
+      html+='<div style="display:flex;align-items:center;gap:4px">'
+        +'<span style="padding:3px 8px;background:#3a7bd5;color:#fff;border-radius:6px;font-size:12px;font-family:inherit">'+(tk?escHtml(tk.label):seg.k)+'</span>'
+        +'<button onclick="removeSegment(\''+event+'\','+i+')" style="border:none;background:none;cursor:pointer;color:#c00;font-size:14px;line-height:1">\u00d7</button>'
+        +'</div>';
+    } else {
+      html+='<div style="display:flex;align-items:center;gap:4px">'
+        +'<input type="text" value="'+escHtml(seg.t||'')+'" '
+        +'oninput="updateSegText(\''+event+'\','+i+',this.value)" '
+        +'style="flex:1;padding:4px 6px;border:1px solid #a0b8d8;border-radius:6px;font-size:12px;font-family:inherit;color:#1a1a18">'
+        +'<button onclick="removeSegment(\''+event+'\','+i+')" style="border:none;background:none;cursor:pointer;color:#c00;font-size:14px;line-height:1;flex-shrink:0">\u00d7</button>'
+        +'</div>';
+    }
+  });
+  return html;
+}
+
+function _ensureCustomTemplate(event){
+  const lang=announceLang;
+  if(!_customTemplates[lang])_customTemplates[lang]={};
+  if(!_customTemplates[lang][event]){
+    // Deep copy default
+    _customTemplates[lang][event]=JSON.parse(JSON.stringify(TMPL_DEFAULTS[lang][event]||[]));
+  }
+  return _customTemplates[lang][event];
+}
+
+function addTokenToTemplate(event,tokenId){
+  const segs=_ensureCustomTemplate(event);
+  segs.push({k:tokenId});
+  saveTemplates();
+  buildVoiceSettingsPanel();
+}
+
+function addTextToTemplate(event){
+  const segs=_ensureCustomTemplate(event);
+  segs.push({t:''});
+  saveTemplates();
+  buildVoiceSettingsPanel();
+}
+
+function removeSegment(event,idx){
+  const segs=_ensureCustomTemplate(event);
+  segs.splice(idx,1);
+  saveTemplates();
+  buildVoiceSettingsPanel();
+}
+
+function updateSegText(event,idx,val){
+  const segs=_ensureCustomTemplate(event);
+  if(segs[idx])segs[idx].t=val;
+  saveTemplates();
+}
+
+function resetTemplate(event){
+  const lang=announceLang;
+  if(!_customTemplates[lang])_customTemplates[lang]={};
+  _customTemplates[lang][event]=JSON.parse(JSON.stringify(TMPL_DEFAULTS[lang][event]||[]));
+  saveTemplates();
+  buildVoiceSettingsPanel();
+}
+
+
+
+// ── IB ANNOUNCEMENTS TABLE ──
+// null = no announcement for this event/type
+// Functions receive (exam, lang, now) where now=Date object at trigger time
+function ibText(type, event, lang, exam, now){
+  const fr=lang==='fr';
+  const fr2=lang==='fr';
+  const dur=fmtSpoken(exam.timers.find(ti=>ti.label==='Principal')?.total||0,fr2);
+  const heure=now?(now.getHours()+(fr2?' heures ':' hours ')+now.getMinutes().toString().padStart(2,'0')):'';
   const heureEn=now?(now.getHours()+':'+(now.getMinutes()<10?'0':'')+now.getMinutes()):'';
+
+  // Reading start — same for all types except mcq (no reading)
   if(event==='readingStart'){
     if(type==='mcq')return null;
-    return fr?"Vous pouvez à présent ouvrir votre épreuve d'examen. Votre temps de lecture commence maintenant.":"You may now open your examination paper. Your reading time starts now.";
+    return fr
+      ?"Vous pouvez à présent ouvrir votre épreuve d'examen. Votre temps de lecture commence maintenant."
+      :"You may now open your examination paper. Your reading time starts now.";
   }
+
+  // Reading end — same for all types except mcq
   if(event==='readingEnd'){
     if(type==='mcq')return null;
-    return fr?`Le temps de lecture est terminé. Vous avez ${dur} pour cette épreuve d'examen. Vous pouvez commencer à écrire. Il est ${heure}.`:`Your reading time is over. You have ${dur} for this examination paper. You may start to write. The time now is ${heureEn}.`;
+    return fr
+      ?`Le temps de lecture est terminé. Vous avez ${dur} pour cette épreuve d'examen. Vous pouvez commencer à écrire. Il est ${heure}.`
+      :`Your reading time is over. You have ${dur} for this examination paper. You may start to write. The time now is ${heureEn}.`;
   }
+
+  // Exam start (only relevant for mcq which has no reading)
   if(event==='examStart'){
-    if(type!=='mcq')return null;
-    return fr?`Vous pouvez commencer à écrire. Il est ${heure}.`:`You may now start the examination. The time now is ${heureEn}.`;
+    if(type!=='mcq')return null; // others use readingEnd as the start signal
+    return fr
+      ?`Vous pouvez commencer à écrire. Il est ${heure}.`
+      :`You may now start the examination. The time now is ${heureEn}.`;
   }
+
+  // 30-minute warning — all types except acq
   if(event==='alert30'){
     if(type==='acq')return null;
     return fr?"Il vous reste 30 minutes.":"The time remaining is 30 minutes.";
   }
+
+  // 5-minute warning
   if(event==='alert5'){
     if(type==='acq')return null;
-    if(type==='ns')return fr?"Il vous reste cinq minutes. Assurez-vous de rayer d'un trait toute partie de votre travail que vous ne voulez pas voir prise en compte lors de la notation. Si cela s'applique à la totalité d'une question, n'oubliez pas de noircir la case contenant le numéro de la question.":"The time remaining is five minutes. Please ensure you draw a line through any work that you do not wish to be marked; if this applies to a whole question, remember to fill in the relevant question number box as well.";
-    if(type==='ss')return fr?"Il vous reste cinq minutes. Assurez-vous de rayer d'un trait toute partie de votre travail que vous ne voulez pas voir prise en compte lors de la notation.":"The time remaining is 5 minutes. Please ensure you draw a line through any work that you do not wish to be marked.";
-    if(type==='mcq')return fr?"Il vous reste cinq minutes.":"The time remaining is five minutes.";
+    if(type==='ns')
+      return fr
+        ?"Il vous reste cinq minutes. Assurez-vous de rayer d'un trait toute partie de votre travail que vous ne voulez pas voir prise en compte lors de la notation. Si cela s'applique à la totalité d'une question, n'oubliez pas de noircir la case contenant le numéro de la question."
+        :"The time remaining is five minutes. Please ensure you draw a line through any work that you do not wish to be marked; if this applies to a whole question, remember to fill in the relevant question number box as well.";
+    if(type==='ss')
+      return fr
+        ?"Il vous reste cinq minutes. Assurez-vous de rayer d'un trait toute partie de votre travail que vous ne voulez pas voir prise en compte lors de la notation."
+        :"The time remaining is 5 minutes. Please ensure you draw a line through any work that you do not wish to be marked.";
+    if(type==='mcq')
+      return fr?"Il vous reste cinq minutes.":"The time remaining is five minutes.";
     return null;
   }
-  if(event==='end')return fr?"L'épreuve est terminée. Veuillez arrêter d'écrire immédiatement. Il ne vous est pas permis d'ajouter quoi que ce soit à vos réponses ni de les modifier.":"The examination has ended. Please stop writing immediately. Do not make any additions or amendments to your answers.";
+
+  // End of exam — same for all types
+  if(event==='end'){
+    return fr
+      ?"L'épreuve est terminée. Veuillez arrêter d'écrire immédiatement. Il ne vous est pas permis d'ajouter quoi que ce soit à vos réponses ni de les modifier."
+      :"The examination has ended. Please stop writing immediately. Do not make any additions or amendments to your answers.";
+  }
+
   return null;
 }
 
-function ibGroupAnnouncements(examList,event,now){
-  const groups={};
+// Group exams by their IB announcement text, return array of {text, exams[]}
+// exams with null text are omitted
+function ibGroupAnnouncements(examList, event, now){
+  const groups={}; // text → [exam, ...]
   examList.forEach(exam=>{
-    const text=ibText(exam.ibType||'ns',event,announceLang,exam,now);
+    const text=ibText(exam.ibType||'ns', event, announceLang, exam, now);
     if(!text)return;
     if(!groups[text])groups[text]=[];
     groups[text].push(exam);
@@ -445,23 +603,38 @@ function ibGroupAnnouncements(examList,event,now){
   return Object.entries(groups).map(([text,exams])=>({text,exams}));
 }
 
-function ibBuildAnnouncement(group,allRunningExams){
-  const fr=announceLang==='fr';
-  const prefix=buildPrefix(group.exams,allRunningExams,fr,false);
-  return prefix+group.text;
+// Build prefix: "Pour Maths : " or "Pour Maths et Français : "
+// showExtraTime=true only when the announcement differs for extra-time timers
+function buildPrefix(examList, allRunningExams, fr, showExtraTime=false){
+  const allCovered = examList.length >= allRunningExams.length;
+  if(allCovered && !showExtraTime) return ''; // announcement applies to all, no prefix
+
+  const parts = examList.map(e => {
+    const extras = showExtraTime && e.timers
+      ? e.timers.filter(ti=>!ti.done && ti.label!=='Principal').map(ti=>ti.label)
+      : [];
+    if(allCovered){
+      // Only show extra time label if requested
+      return extras.length ? (fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`) : null;
+    }
+    if(extras.length)
+      return fr ? `${e.title}, temps supplémentaire de ${joinList(extras,fr)}` : `${e.title}, additional time of ${joinList(extras,fr)}`;
+    return e.title;
+  }).filter(Boolean);
+
+  if(!parts.length) return '';
+  return (fr ? `Pour ${joinList(parts,fr)} : ` : `For ${joinList(parts,fr)}: `);
 }
 
-function ibAnnounce(examList,event,interrupt=false,examIds=null){
-  if(audioMode==='silence')return;
-  const now=new Date();
-  const allRunning=exams.filter(e=>e.status==='running'||e.status==='reading');
-  const ids=examIds||examList.map(e=>e.id);
-  ibGroupAnnouncements(examList,event,now).forEach(group=>{
-    announce(ibBuildAnnouncement(group,allRunning),{interrupt,examIds:ids});
-  });
+function ibBuildAnnouncement(group, allRunningExams){
+  const fr=announceLang==='fr';
+  // IB: groups already formed by identical text, no need to mention extra time
+  const prefix = buildPrefix(group.exams, allRunningExams, fr, false);
+  return prefix + group.text;
 }
 
 function addExam(){
+  // Save current titles before any re-render
   examDefs.forEach(def=>{
     const el=document.getElementById('inp-title-'+def.id);
     if(el)def.title=el.value;
@@ -476,6 +649,23 @@ function removeExam(eid){
   examDefs=examDefs.filter(e=>e.id!==eid);
   renderExamList();
 }
+function toggleExamReading(eid){
+  const def=examDefs.find(e=>e.id===eid);if(!def)return;
+  def.readingOn=def.readingOn===false?true:false;
+  const sw=document.getElementById('sw-reading-'+eid);
+  const lbl=document.getElementById('reading-label-'+eid);
+  if(sw)sw.classList.toggle('on',def.readingOn!==false);
+  if(lbl)lbl.textContent=(def.readingOn!==false?'Temps de lecture ✓':'Temps de lecture —');
+}
+
+function toggleIBMode(){
+  ibMode=!ibMode;
+  const sw=document.getElementById('sw-ib');
+  if(sw)sw.classList.toggle('on',ibMode);
+  renderExamList();
+  savePrefs();
+}
+
 function toggleExtra(eid,key){const def=examDefs.find(e=>e.id===eid);if(!def)return;const on=Object.values(def.tog).filter(Boolean).length;if(def.tog[key]&&on<=1)return;def.tog[key]=!def.tog[key];const btn=document.getElementById(`et-${eid}-${key}`);if(btn){btn.classList.toggle('on',def.tog[key]);btn.querySelector('.sw-sm').classList.toggle('on',def.tog[key]);}checkStart();}
 function renderExamList(){
   // Save current durations and ibType before re-render
@@ -488,65 +678,68 @@ function renderExamList(){
     if(s)def._s=s.value;
     const it=document.getElementById('inp-ibtype-'+def.id);
     if(it)def.ibType=it.value;
+    const rt=document.getElementById('inp-reading-on-'+def.id);
+    if(rt)def.readingOn=rt.checked;
   });
-  document.getElementById('exam-list').innerHTML=examDefs.map((def,i)=>`
-    <div class="exam-card" id="ecard-${def.id}">
-      <div class="exam-card-header">
-        <span class="exam-card-num">Examen ${i+1}</span>
-        ${examDefs.length>1
-          ? `<button class="exam-card-remove" onclick="removeExam(${def.id})" title="Supprimer">🗑</button>`
-          : `<button class="exam-card-remove" style="opacity:.25;cursor:not-allowed" disabled>🗑</button>`}
-      </div>
-      <div class="field" style="margin-bottom:10px">
-        <label>Titre</label>
-        <input type="text" id="inp-title-${def.id}" placeholder="ex. Mathématiques" value="${escHtml(def.title)}" oninput="examDefs.find(e=>e.id===${def.id}).title=this.value">
-      </div>
-      <div class="time-row">
-        <div class="field"><label>Heures</label><input type="number" id="inp-h-${def.id}" min="0" max="23" value="${def._h!==undefined?def._h:'0'}" oninput="checkStart()"></div>
-        <div class="field"><label>Minutes</label><input type="number" id="inp-m-${def.id}" min="0" max="59" value="${def._m!==undefined?def._m:'60'}" oninput="checkStart()"></div>
-        <div class="field"><label>Secondes</label><input type="number" id="inp-s-${def.id}" min="0" max="59" value="${def._s!==undefined?def._s:'0'}" oninput="checkStart()"></div>
-      </div>
-      <div class="section-title" style="margin-bottom:6px">Temps supplémentaires</div>
-      <div class="extra-toggles" style="margin-bottom:8px">
-        <div class="extra-toggle on" id="et-${def.id}-main" onclick="toggleExtra(${def.id},'main')"><div class="sw-sm on"></div>Principal</div>
-        <div class="extra-toggle ${def.tog.t25?'on':''}" id="et-${def.id}-t25" onclick="toggleExtra(${def.id},'t25')">
-          <div class="sw-sm ${def.tog.t25?'on':''}"></div>
-          +<input type="text" id="inp-p1-${def.id}" value="${escHtml(def.p1||'25%')}"
-            style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit"
-            onclick="event.stopPropagation()" oninput="examDefs.find(e=>e.id===${def.id}).p1=this.value">
-        </div>
-        <div class="extra-toggle ${def.tog.t50?'on':''}" id="et-${def.id}-t50" onclick="toggleExtra(${def.id},'t50')">
-          <div class="sw-sm ${def.tog.t50?'on':''}"></div>
-          +<input type="text" id="inp-p2-${def.id}" value="${escHtml(def.p2||'50%')}"
-            style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit"
-            onclick="event.stopPropagation()" oninput="examDefs.find(e=>e.id===${def.id}).p2=this.value">
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;background:#f8f6f2;border-radius:8px;cursor:pointer"
-           onclick="toggleExamReading(${def.id})">
-        <span style="font-size:13px;color:#666;flex:1">Temps de lecture${def.readingOn!==false?' ✓':'  —'}</span>
-        <div class="sw${def.readingOn!==false?' on':''}" id="sw-reading-${def.id}"></div>
-      </div>
-      ${ibMode?`<div style="margin-top:8px">
-        <label style="font-size:12px;color:#1a4a8a;font-weight:500;display:block;margin-bottom:4px">Type d'épreuve IB</label>
-        <select id="inp-ibtype-${def.id}" style="width:100%;padding:6px 8px;border:1px solid #d0cdc6;border-radius:7px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none"
-          onchange="examDefs.find(e=>e.id===${def.id}).ibType=this.value">
-          <option value="ns" ${def.ibType==='ns'?'selected':''}>Non-structuré</option>
-          <option value="ss" ${def.ibType==='ss'?'selected':''}>Structuré / semi-structuré</option>
-          <option value="mcq" ${def.ibType==='mcq'?'selected':''}>QCM (multiple choice)</option>
-          <option value="acq" ${def.ibType==='acq'?'selected':''}>Acquisition de langues</option>
-        </select>
-      </div>`:''}
-    </div>`).join('');
+  let listHtml='';
+  examDefs.forEach(function(def,i){
+    const removeBtn=examDefs.length>1
+      ?('<button class="exam-card-remove" onclick="removeExam('+def.id+')" title="Supprimer">\uD83D\uDDD1</button>')
+      :'<button class="exam-card-remove" style="opacity:.25;cursor:not-allowed" disabled>\uD83D\uDDD1</button>';
+    const ibSel=ibMode
+      ?('<div class="field" style="margin-bottom:0">'
+        +'<label style="font-size:12px;color:#1a4a8a;font-weight:500">Type d\'épreuve IB</label>'
+        +'<select id="inp-ibtype-'+def.id+'" style="width:100%;padding:6px 8px;border:1px solid #d0cdc6;border-radius:7px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none" '
+        +'onchange="examDefs.find(function(e){return e.id==='+def.id+';}).ibType=this.value">'
+        +'<option value="ns"'+(def.ibType==='ns'?' selected':'')+'>Non-structuré</option>'
+        +'<option value="ss"'+(def.ibType==='ss'?' selected':'')+'>Structuré / semi-structuré</option>'
+        +'<option value="mcq"'+(def.ibType==='mcq'?' selected':'')+'>QCM (multiple choice)</option>'
+        +'<option value="acq"'+(def.ibType==='acq'?' selected':'')+'>Acquisition de langues</option>'
+        +'</select></div>')
+      :'';
+    const readingLabel=def.readingOn!==false?'Temps de lecture ✓':'Temps de lecture —';
+    const swOnClass=def.readingOn!==false?' on':'';
+    listHtml+='<div class="exam-card" id="ecard-'+def.id+'">'
+      +'<div class="exam-card-header">'
+      +'<span class="exam-card-num">Épreuve '+(i+1)+'</span>'
+      +removeBtn
+      +'</div>'
+      +'<div class="field" style="margin-bottom:10px">'
+      +'<label>Nom de l\'épreuve</label>'
+      +'<input type="text" id="inp-title-'+def.id+'" placeholder="ex: Maths HL" value="'+escHtml(def.title)+'" '
+      +'oninput="examDefs.find(function(e){return e.id==='+def.id+';}).title=this.value">'
+      +'</div>'
+      +'<div class="time-row">'
+      +'<div class="field"><label>H</label><input type="number" id="inp-h-'+def.id+'" min="0" max="23" value="'+(def._h!==undefined?def._h:'0')+'" oninput="checkStart()"></div>'
+      +'<div class="field"><label>Min</label><input type="number" id="inp-m-'+def.id+'" min="0" max="59" value="'+(def._m!==undefined?def._m:'60')+'" oninput="checkStart()"></div>'
+      +'<div class="field"><label>Sec</label><input type="number" id="inp-s-'+def.id+'" min="0" max="59" value="'+(def._s!==undefined?def._s:'0')+'" oninput="checkStart()"></div>'
+      +'</div>'
+      +'<div class="section-title" style="margin-bottom:6px">Temps supplémentaire</div>'
+      +'<div class="extra-toggles" style="margin-bottom:8px">'
+      +'<div class="extra-toggle on" id="et-'+def.id+'-main" onclick="toggleExtra('+def.id+',\'main\')"><div class="sw-sm on"></div>Principal</div>'
+      +'<div class="extra-toggle '+(def.tog.t25?'on':'')+'" id="et-'+def.id+'-t25" onclick="toggleExtra('+def.id+',\'t25\')">'
+      +'<div class="sw-sm '+(def.tog.t25?'on':'')+'"></div>'
+      +'+<input type="text" id="inp-p1-'+def.id+'" value="'+escHtml(def.p1||'25%')+'" '
+      +'style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit" '
+      +'onclick="event.stopPropagation()" oninput="examDefs.find(function(e){return e.id==='+def.id+';}).p1=this.value">'
+      +'</div>'
+      +'<div class="extra-toggle '+(def.tog.t50?'on':'')+'" id="et-'+def.id+'-t50" onclick="toggleExtra('+def.id+',\'t50\')">'
+      +'<div class="sw-sm '+(def.tog.t50?'on':'')+'"></div>'
+      +'+<input type="text" id="inp-p2-'+def.id+'" value="'+escHtml(def.p2||'50%')+'" '
+      +'style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit" '
+      +'onclick="event.stopPropagation()" oninput="examDefs.find(function(e){return e.id==='+def.id+';}).p2=this.value">'
+      +'</div>'
+      +'</div>'
+      +ibSel
+      +'<div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;background:#f8f6f2;border-radius:8px;cursor:pointer" '
+      +'onclick="toggleExamReading('+def.id+')">'
+      +'<span style="font-size:13px;color:#666;flex:1" id="reading-label-'+def.id+'">'+readingLabel+'</span>'
+      +'<div class="sw'+swOnClass+'" id="sw-reading-'+def.id+'"></div>'
+      +'</div>'
+      +'</div>';
+  });
+  document.getElementById('exam-list').innerHTML=listHtml;
   checkStart();
-}
-
-function toggleExamReading(eid){
-  const def=examDefs.find(e=>e.id===eid);if(!def)return;
-  def.readingOn=def.readingOn===false;
-  const sw=document.getElementById('sw-reading-'+eid);
-  const lbl=document.querySelector(`#ecard-${eid} .reading-per-exam-label`);
-  if(sw)sw.classList.toggle('on',def.readingOn!==false);
 }
 function checkStart(){
   const btn=document.getElementById('start-btn');
@@ -579,70 +772,39 @@ function setArc(tid,left,total,state,r){
   const el=document.getElementById('arc-'+tid);if(!el)return;
   const circ=2*Math.PI*r;
   el.style.strokeDashoffset=(circ*Math.max(0,1-(total>0?left/total:0))).toFixed(2);
+  // Same colors as t-display text
   el.style.stroke={normal:'#1a1a18',near30:'#1a5abf',warning:'#c0392b',done:'#e8e6e0'}[state]||'#1a1a18';
 }
 
+// ── SOUNDS ──
+// ── AUDIO ──
 // ── LANGUAGE & VOICE ──
-let announceLang = 'fr';
-let selectedVoice = null;
-
+let announceLang='fr';
+let selectedVoice=null;
 function setLang(l){
-  announceLang = l;
-  ['fr','en'].forEach(code=>{
-    const btn=document.getElementById('lang-'+code);
-    if(!btn)return;
-    btn.style.background    = l===code?'#3a7bd5':'#fff';
-    btn.style.color         = l===code?'#fff':'#666';
-    btn.style.borderColor   = l===code?'#3a7bd5':'#d0cdc6';
-    btn.style.fontWeight    = l===code?'500':'400';
+  announceLang=l;
+  savePrefs();['fr','en'].forEach(code=>{
+    const btn=document.getElementById('lang-'+code);if(!btn)return;
+    btn.style.background=l===code?'#3a7bd5':'#fff';
+    btn.style.color=l===code?'#fff':'#666';
+    btn.style.borderColor=l===code?'#3a7bd5':'#d0cdc6';
+    btn.style.fontWeight=l===code?'500':'400';
   });
-  selectedVoice = null; // reset voice when language changes
-  populateVoices();
+  selectedVoice=null;populateVoices();
+  if(_voiceSettingsOpen)buildVoiceSettingsPanel();
   savePrefs();
 }
-
 function populateVoices(){
-  if(!window.speechSynthesis) return;
-  const voices = window.speechSynthesis.getVoices();
-  if(!voices.length) return;
-  const sel = document.getElementById('voice-select');
-  if(!sel) return;
-  const langPrefix = announceLang === 'fr' ? 'fr' : 'en';
-  const filtered = voices.filter(v => v.lang.toLowerCase().startsWith(langPrefix));
-  sel.innerHTML = '<option value="">Voix par défaut</option>';
-  filtered.forEach((v,i)=>{
-    const opt = document.createElement('option');
-    opt.value = v.name;
-    opt.textContent = `${v.name} (${v.lang})`;
-    sel.appendChild(opt);
-  });
-  sel.onchange = ()=>{
-    const name = sel.value;
-    selectedVoice = name ? voices.find(v=>v.name===name) || null : null;
-  };
+  if(!window.speechSynthesis)return;
+  const voices=window.speechSynthesis.getVoices();if(!voices.length)return;
+  const sel=document.getElementById('voice-select');if(!sel)return;
+  const lp=announceLang==='fr'?'fr':'en';
+  const filtered=voices.filter(v=>v.lang.toLowerCase().startsWith(lp));
+  sel.innerHTML='<option value="">Voix par défaut</option>';
+  filtered.forEach(v=>{const o=document.createElement('option');o.value=v.name;o.textContent=`${v.name} (${v.lang})`;sel.appendChild(o);});
+  sel.onchange=()=>{const name=sel.value;selectedVoice=name?voices.find(v=>v.name===name)||null:null;};
 }
-
-// Voices load asynchronously — populate when ready
-if(window.speechSynthesis){
-  window.speechSynthesis.onvoiceschanged = populateVoices;
-  // Some browsers already have voices
-  populateVoices();
-}
-
-// ── SPEECH ENGINE ──
-// iOS Safari allows speechSynthesis from setInterval callbacks (confirmed via testing).
-// No audio session bridge needed — speak directly.
-let _speechQueue=[], _speechBusy=false, _speechWatchdog=null;
-
-function _resetSpeech(){
-  _speechBusy=false;
-  if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}
-}
-
-// No-op stubs so existing call sites don't break
-function _startAudioSession(){}
-function _stopAudioSession(){_speechQueue=[];_pendingQueue=[];}
-let _pendingQueue=[];
+if(window.speechSynthesis){window.speechSynthesis.onvoiceschanged=populateVoices;populateVoices();}
 
 function splitIntoChunks(text,maxLen=200){
   const sentences=text.match(/[^.!?]+[.!?]+[\s]*/g)||[text];
@@ -651,188 +813,287 @@ function splitIntoChunks(text,maxLen=200){
   if(current.trim())chunks.push(current.trim());
   return chunks.length?chunks:[text];
 }
+// ── SPEECH ENGINE ──
+let _speechQueue=[];
+let _speechBusy=false;
+let _speechWatchdog=null;
 
-function _speakNow(text,{interrupt=false,examIds=null,timerIds=null}={}){
-  if(!window.speechSynthesis||!text)return;
-  const voice=selectedVoice||(()=>{
-    const vv=window.speechSynthesis.getVoices();
-    if(announceLang==='en'){
-      return vv.find(v=>v.lang.toLowerCase().startsWith('en-gb')&&v.localService)
-          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-gb'))
-          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-us')&&v.localService)
-          ||vv.find(v=>v.lang.toLowerCase().startsWith('en'))||null;
-    }
-    return vv.find(v=>v.lang.toLowerCase().startsWith('fr')&&v.localService)
-        ||vv.find(v=>v.lang.toLowerCase().startsWith('fr'))||null;
-  })();
-  const chunks=splitIntoChunks(text);
-  if(interrupt){
-    _speechQueue=[];
-    _resetSpeech();
-    hideSpeaking();
-  }
-  showSpeaking(examIds,timerIds);
-  _speechQueue.push({chunks,langCode:announceLang,voice,examIds,timerIds});
-  setTimeout(_processQueue,50);
-}
-
-// ── SPEAKING INDICATOR ──
-let _speakingDots=new Set();
-function showSpeaking(examIds, timerIds){
-  hideSpeaking();
-  if(timerIds&&timerIds.length>0){
-    timerIds.forEach(tid=>{const el=document.getElementById('speak-dot-'+tid);if(el){el.classList.add('active');_speakingDots.add(tid);}});
-  } else {
-    const targets=examIds?exams.filter(e=>examIds.includes(e.id)):exams.filter(e=>e.status==='running'||e.status==='reading');
-    targets.forEach(exam=>{exam.timers.forEach(ti=>{const el=document.getElementById('speak-dot-'+ti.id);if(el){el.classList.add('active');_speakingDots.add(ti.id);}});});
-  }
-}
-function hideSpeaking(){
-  _speakingDots.forEach(id=>{const el=document.getElementById('speak-dot-'+id);if(el)el.classList.remove('active');});
-  _speakingDots.clear();
+function _resetSpeech(){
+  _speechBusy=false;
+  if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}
 }
 
 function _processQueue(){
-  if(_speechBusy||_speechQueue.length===0){if(!_speechBusy)hideSpeaking();return;}
+  if(_speechBusy||_speechQueue.length===0){
+    if(!_speechBusy&&_speechQueue.length===0)hideSpeaking();
+    return;
+  }
   if(!window.speechSynthesis)return;
   _speechBusy=true;
   const {chunks,langCode,voice,examIds,timerIds}=_speechQueue.shift();
-  showSpeaking(examIds||null,timerIds||null);
+  if(typeof showSpeaking==='function')showSpeaking(examIds||null, timerIds||null);
   _speakChunksQueued(chunks,langCode,voice,0);
 }
+
 function _speakChunksQueued(chunks,langCode,voice,idx){
-  if(idx>=chunks.length){_resetSpeech();setTimeout(_processQueue,150);return;}
+  if(idx>=chunks.length){
+    _resetSpeech();
+    setTimeout(_processQueue,150);
+    return;
+  }
   if(!window.speechSynthesis){_resetSpeech();return;}
   const u=new SpeechSynthesisUtterance(chunks[idx]);
-  u.lang=langCode==='en'?'en-GB':'fr-FR';u.rate=0.95;u.pitch=1;u.volume=1;
+  u.lang=langCode==='en'?'en-GB':'fr-FR';
+  u.rate=0.95;u.pitch=1;u.volume=1;
   if(voice)u.voice=voice;
-  u.onend=()=>{if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}_speakChunksQueued(chunks,langCode,voice,idx+1);};
+  u.onend=()=>{
+    if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}
+    _speakChunksQueued(chunks,langCode,voice,idx+1);
+  };
   u.onerror=()=>{_resetSpeech();hideSpeaking();setTimeout(_processQueue,150);};
   _speechWatchdog=setTimeout(()=>{_resetSpeech();hideSpeaking();setTimeout(_processQueue,150);},30000);
   try{window.speechSynthesis.speak(u);}catch(e){_resetSpeech();hideSpeaking();}
 }
 
-// No warm-up needed — iOS allows speech from setInterval directly
+let _warmingUp=false;
+function warmUpSpeech(){
+  if(!window.speechSynthesis||_warmingUp)return;
+  _warmingUp=true;
+  try{
+    window.speechSynthesis.cancel(); // clear any stuck state
+    const u=new SpeechSynthesisUtterance('\u200B'); // zero-width space
+    u.volume=0;
+    u.onend=u.onerror=()=>{_warmingUp=false;};
+    window.speechSynthesis.speak(u);
+  }catch(e){_warmingUp=false;}
+}
+
+document.addEventListener('touchstart',warmUpSpeech,{passive:true});
+document.addEventListener('mousedown',warmUpSpeech,{passive:true});
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'){
-    _resetSpeech();
+    _resetSpeech(); // reset in case browser killed speech in background
     if(intervalId&&!paused)acquireWakeLock();
-    if(_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{});
+    if(typeof _audioCtx!=='undefined'&&_audioCtx&&_audioCtx.state==='suspended')_audioCtx.resume().catch(()=>{});
   }
 });
 
 function announce(text,{interrupt=false,examIds=null,timerIds=null}={}){
   if(audioMode!=='voice'||!window.speechSynthesis||!text)return;
-  _speakNow(text,{interrupt,examIds,timerIds});
-}
-
-// ── AUDIO (beep fallback for desktop) ──
-let _audioCtx = null;
-function getAudioCtx(){
-  if(!_audioCtx){try{_audioCtx=new(window.AudioContext||window.webkitAudioContext)();}catch(e){return null;}}
-  return _audioCtx;
-}
-function unlockAudio(){const c=getAudioCtx();if(c&&c.state!=='running')c.resume().catch(()=>{});}
-document.addEventListener('touchstart', unlockAudio, {once: true});
-document.addEventListener('mousedown',  unlockAudio, {once: true});
-
-function _playBeep(C,f,d,v){
-  try{
-    const o=C.createOscillator(),g=C.createGain();
-    o.connect(g);g.connect(C.destination);
-    o.type='sine';o.frequency.value=f;
-    g.gain.setValueAtTime(v,C.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001,C.currentTime+d);
-    o.start();o.stop(C.currentTime+d);
-  }catch(e){}
-}
-function beep(f,d,v=0.3){
-  try{
-    const C=getAudioCtx();if(!C)return;
-    if(C.state==='running'){_playBeep(C,f,d,v);}
-    else{C.resume().then(()=>_playBeep(C,f,d,v)).catch(()=>{});}
-  }catch(e){}
-}
-
-// ── SMART ANNOUNCEMENTS ──
-// Build announcement text with exam/timer context
-function buildAlertText(minutes, timerContexts){
-  const fr = announceLang === 'fr';
-  const minText = fr ? (minutes<=1?'une minute':`${minutes} minutes`) : (minutes<=1?'one minute':`${minutes} minutes`);
-  const base = fr ? `Il reste ${minText}.` : `${minutes<=1?'One minute':minText} remaining.`;
-  if(!timerContexts||timerContexts.length===0) return base;
-  const runningExams = exams.filter(e=>e.status==='running');
-  const totalActiveTimers = runningExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length, 0);
-  const hasExtra = timerContexts.some(c=>c.isExtra);
-  if(runningExams.length<=1 && !hasExtra) return base;
-  if(timerContexts.length===totalActiveTimers && !hasExtra) return base;
-  const examGroups = {};
-  timerContexts.forEach(({examTitle,timerLabel,isExtra})=>{
-    if(!examGroups[examTitle]) examGroups[examTitle]=[];
-    if(isExtra) examGroups[examTitle].push(timerLabel);
-  });
-  const allExamsCovered = Object.keys(examGroups).length >= runningExams.length;
-  const parts = Object.entries(examGroups).map(([title,extras])=>{
-    if(allExamsCovered){
-      return extras.length ? (fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`) : null;
+  const voice=selectedVoice||(()=>{
+    const vv=window.speechSynthesis.getVoices();
+    if(announceLang==='en'){
+      // Prefer British, fall back to US, then any English
+      return vv.find(v=>v.lang.toLowerCase().startsWith('en-gb')&&v.localService)
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-gb'))
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-us')&&v.localService)
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en'))
+          ||null;
     }
-    if(extras.length) return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return vv.find(v=>v.lang.toLowerCase().startsWith('fr')&&v.localService)
+        ||vv.find(v=>v.lang.toLowerCase().startsWith('fr'))
+        ||null;
+  })();
+  const chunks=splitIntoChunks(text);
+  if(interrupt){
+    _speechQueue=[];
+    try{window.speechSynthesis.cancel();}catch(e){}
+    _resetSpeech();
+    hideSpeaking();
+  }
+  _speechQueue.push({chunks,langCode:announceLang,voice,examIds,timerIds});
+  setTimeout(_processQueue,interrupt?100:0);
+}
+
+// ── AUDIO (beep) ──
+let _audioCtx=null;
+function getAudioCtx(){if(!_audioCtx){try{_audioCtx=new(window.AudioContext||window.webkitAudioContext)();}catch(e){return null;}}return _audioCtx;}
+function unlockAudio(){const c=getAudioCtx();if(c&&c.state!=='running')c.resume().catch(()=>{});}
+document.addEventListener('touchstart',unlockAudio,{passive:true});
+document.addEventListener('mousedown',unlockAudio,{passive:true});
+function _playBeep(C,f,d,v){try{const o=C.createOscillator(),g=C.createGain();o.connect(g);g.connect(C.destination);o.type='sine';o.frequency.value=f;g.gain.setValueAtTime(v,C.currentTime);g.gain.exponentialRampToValueAtTime(0.001,C.currentTime+d);o.start();o.stop(C.currentTime+d);}catch(e){}}
+function beep(f,d,v=0.3){try{const C=getAudioCtx();if(!C)return;if(C.state==='running'){_playBeep(C,f,d,v);}else{C.resume().then(()=>_playBeep(C,f,d,v)).catch(()=>{});}}catch(e){}}
+
+
+// ── SPEAKING INDICATOR ──
+let _speakingDots=new Set();
+// timerIds: specific timer IDs to highlight, or null for all timers of examIds
+// examIds: exam IDs to highlight, or null for all running exams
+function showSpeaking(examIds, timerIds){
+  hideSpeaking();
+  if(timerIds&&timerIds.length>0){
+    // Highlight only specific timers
+    timerIds.forEach(tid=>{
+      const el=document.getElementById('speak-dot-'+tid);
+      if(el){el.classList.add('active');_speakingDots.add(tid);}
+    });
+  } else {
+    // Highlight all timers of the specified exams (or all running)
+    const targets=examIds
+      ?exams.filter(e=>examIds.includes(e.id))
+      :exams.filter(e=>e.status==='running'||e.status==='reading');
+    targets.forEach(exam=>{
+      exam.timers.forEach(ti=>{
+        const el=document.getElementById('speak-dot-'+ti.id);
+        if(el){el.classList.add('active');_speakingDots.add(ti.id);}
+      });
+    });
+  }
+}
+function hideSpeaking(){
+  _speakingDots.forEach(id=>{
+    const el=document.getElementById('speak-dot-'+id);if(el)el.classList.remove('active');
+  });
+  _speakingDots.clear();
+}
+
+function joinList(arr,fr){if(arr.length===1)return arr[0];const conj=fr?' et ':' and ';return arr.slice(0,-1).join(', ')+conj+arr[arr.length-1];}
+
+function buildAlertText(minutes, timerContexts){
+  const fr=announceLang==='fr';
+  const minText=fr?(minutes<=1?'une minute':`${minutes} minutes`):(minutes<=1?'one minute':`${minutes} minutes`);
+  const base=fr?`Il reste ${minText}.`:`${minutes<=1?'One minute':minText} remaining.`;
+  if(!timerContexts||timerContexts.length===0)return base;
+
+  const runningExams=exams.filter(e=>e.status==='running');
+  const multipleExams=runningExams.length>1;
+  const totalActiveTimers=runningExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length,0);
+  const hasExtra=timerContexts.some(c=>c.isExtra);
+  // No prefix needed if all timers are alerting and none are extra
+  if(!multipleExams&&!hasExtra)return base;
+  if(timerContexts.length===totalActiveTimers&&!hasExtra)return base;
+
+  // Build prefix: group by exam
+  const examGroups={};
+  timerContexts.forEach(({examTitle,timerLabel,isExtra})=>{
+    if(!examGroups[examTitle])examGroups[examTitle]=[];
+    if(isExtra)examGroups[examTitle].push(timerLabel);
+  });
+  const allExamsCovered=Object.keys(examGroups).length>=runningExams.length;
+
+  const parts=Object.entries(examGroups).map(([title,extras])=>{
+    if(allExamsCovered){
+      // No exam names — only mention extra time if applicable
+      return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    }
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
     return title;
   }).filter(Boolean);
-  if(parts.length===0) return base;
-  const prefix1=fr?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `):`For ${joinList(parts,fr)}: `;
-  return prefix1 + base;
+
+  if(parts.length===0)return base;
+  const prefix=fr
+    ?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `)
+    :`For ${joinList(parts,fr)}: `;
+  return prefix+base;
 }
 
 function buildCombinedEndText(endBatch){
-  const fr = announceLang === 'fr';
-  const base = fr ? "Le temps est écoulé." : "Time is up.";
-  if(endBatch.length===0) return base;
-  const runningExams = exams.filter(e=>e.status==='running');
-  const totalTimers = runningExams.reduce((n,e)=>n+e.timers.length, 0);
-  const anyExtra = endBatch.some(({timer})=>timer.label!=='Principal');
-  if(endBatch.length>=totalTimers && !anyExtra) return base;
-  const groups = {};
+  const fr=announceLang==='fr';
+  const base=fr?"Le temps est écoulé.":"Time is up.";
+  if(endBatch.length===0)return base;
+
+  const runningExams=exams.filter(e=>e.status==='running');
+  const multipleExams=runningExams.length>1;
+  const totalTimers=runningExams.reduce((n,e)=>n+e.timers.length,0);
+  const anyExtra=endBatch.some(({timer})=>timer.label!=='Principal');
+  if(endBatch.length>=totalTimers&&!anyExtra)return base;
+
+  const groups={};
   endBatch.forEach(({exam,timer})=>{
-    if(!groups[exam.title]) groups[exam.title]=[];
-    if(timer.label!=='Principal') groups[exam.title].push(timer.label);
+    if(!groups[exam.title])groups[exam.title]=[];
+    if(timer.label!=='Principal')groups[exam.title].push(timer.label);
   });
-  const allExamsCovered = Object.keys(groups).length >= runningExams.length;
-  const parts = Object.entries(groups).map(([title,extras])=>{
+  const allExamsCovered=Object.keys(groups).length>=runningExams.length;
+
+  const parts=Object.entries(groups).map(([title,extras])=>{
     if(allExamsCovered){
-      return extras.length ? (fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`) : null;
+      return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
     }
-    if(extras.length) return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
     return title;
   }).filter(Boolean);
-  if(parts.length===0) return base;
-  const prefix2=fr?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `):`For ${joinList(parts,fr)}: `;
-  return prefix2 + base;
+
+  if(parts.length===0)return base;
+  const prefix2=fr
+    ?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `)
+    :`For ${joinList(parts,fr)}: `;
+  return prefix2+base;
 }
 
-// Helper: join list
-function buildPrefix(examList,allRunningExams,fr,showExtraTime=false){
-  const allCovered=examList.length>=allRunningExams.length;
-  if(allCovered&&!showExtraTime)return'';
-  const parts=examList.map(e=>{
-    const extras=showExtraTime&&e.timers?e.timers.filter(ti=>!ti.done&&ti.label!=='Principal').map(ti=>ti.label):[];
-    if(allCovered)return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
-    if(extras.length)return fr?`${e.title}, temps supplémentaire de ${joinList(extras,fr)}`:`${e.title}, additional time of ${joinList(extras,fr)}`;
-    return e.title;
-  }).filter(Boolean);
-  if(!parts.length)return'';
-  return fr?`Pour ${joinList(parts,fr)} : `:`For ${joinList(parts,fr)}: `;
+// Build a single fluent sentence for one or multiple exams starting together
+// ── CUSTOM ANNOUNCEMENT TEMPLATES ──
+const TMPL_EVENTS=['readingStart','readingEnd','examStart','alert30','alert5','end'];
+const TMPL_LABELS={
+  fr:{readingStart:'Début du temps de lecture',readingEnd:'Fin du temps de lecture',examStart:'Début de l\'examen',alert30:'1ère alerte',alert5:'2ème alerte',end:'Fin de l\'examen'},
+  en:{readingStart:'Start of reading time',readingEnd:'End of reading time',examStart:'Start of exam',alert30:'1st alert',alert5:'2nd alert',end:'End of exam'}
+};
+const TMPL_TOKENS={
+  fr:[{id:'duree',label:'Durée de l\'épreuve'},{id:'heure',label:'Heure actuelle'},{id:'restant',label:'Temps restant'},{id:'lecture',label:'Durée de lecture'}],
+  en:[{id:'duree',label:'Exam duration'},{id:'heure',label:'Current time'},{id:'restant',label:'Time remaining'},{id:'lecture',label:'Reading duration'}]
+};
+const TMPL_DEFAULTS={
+  fr:{
+    readingStart:[{t:"Le temps de lecture commence maintenant."}],
+    readingEnd:[{t:"Le temps de lecture est terminé."}],
+    examStart:[{t:"L'examen commence. Vous avez "},{k:'duree'},{t:". Il est "},{k:'heure'},{t:"."}],
+    alert30:[{t:'Il reste '},{k:'restant'},{t:'.'}],
+    alert5:[{t:'Il reste '},{k:'restant'},{t:'.'}],
+    end:[{t:"Le temps est écoulé."}],
+  },
+  en:{
+    readingStart:[{t:"Your reading time starts now."}],
+    readingEnd:[{t:"Your reading time is over."}],
+    examStart:[{t:"The exam has started. You have "},{k:'duree'},{t:". The time now is "},{k:'heure'},{t:"."}],
+    alert30:[{t:"30 minutes remaining."}],
+    alert5:[{t:"5 minutes remaining."}],
+    end:[{t:"Time is up."}],
+  }
+};
+
+// Load/save templates from localStorage
+let _customTemplates={fr:null,en:null};
+function loadTemplates(){
+  try{
+    const s=localStorage.getItem('hl-templates');
+    if(s){const d=JSON.parse(s);if(d.fr)_customTemplates.fr=d.fr;if(d.en)_customTemplates.en=d.en;}
+  }catch(e){}
+}
+function saveTemplates(){
+  try{localStorage.setItem('hl-templates',JSON.stringify(_customTemplates));}catch(e){}
+}
+function getTemplate(event){
+  const lang=announceLang;
+  return (_customTemplates[lang]&&_customTemplates[lang][event])||TMPL_DEFAULTS[lang][event]||[];
 }
 
-function joinList(arr, fr){
-  if(arr.length===1) return arr[0];
-  const conj = fr ? ' et ' : ' and ';
-  return arr.slice(0,-1).join(', ') + conj + arr[arr.length-1];
+// Render a template to a string, replacing tokens with runtime values
+function renderTemplate(event,{exam=null,minutes=null,now=null}={}){
+  const segs=getTemplate(event);
+  const fr=announceLang==='fr';
+  const dur=exam?fmtSpoken(exam.timers.find(t=>t.label==='Principal')?.total||0,fr):'';
+  const readingDur=exam?fmtSpoken(exam.readingTotal||0,fr):'';
+  const heure=now?(fr?(now.getHours()+' heures '+now.getMinutes().toString().padStart(2,'0')):(now.getHours()+':'+ now.getMinutes().toString().padStart(2,'0'))):'';
+  const restant=minutes!=null?fmtSpoken(minutes*60,fr):'';
+  return segs.map(seg=>{
+    if(seg.t!=null)return seg.t;
+    if(seg.k==='duree')return dur;
+    if(seg.k==='heure')return heure;
+    if(seg.k==='restant')return restant;
+    if(seg.k==='lecture')return readingDur;
+    return '';
+  }).join('').trim();
+}
+
+// Build announcement text using templates (non-IB)
+function buildAnnouncementBase(event,options={}){
+  return renderTemplate(event,options);
 }
 
 function buildReadingStartText(examList){
   const fr=announceLang==='fr';
-  const base=fr?"Le temps de lecture commence maintenant.":"Your reading time starts now.";
+  const exam=examList[0]||null;
+  const base=buildAnnouncementBase('readingStart',{exam,now:new Date()});
+  if(!base)return null;
   const allReading=exams.filter(e=>e.status==='reading');
   if(examList.length===0||examList.length>=allReading.length)return base;
   const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
@@ -840,7 +1101,9 @@ function buildReadingStartText(examList){
 }
 function buildReadingEndText(examList){
   const fr=announceLang==='fr';
-  const base=fr?"Le temps de lecture est terminé. L'examen commence.":"Reading time is over. The exam begins now.";
+  const exam=examList[0]||null;
+  const base=buildAnnouncementBase('readingEnd',{exam,now:new Date()});
+  if(!base)return null;
   const totalRunning=exams.filter(e=>e.status==='running').length;
   if(examList.length===0||examList.length>=totalRunning)return base;
   const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
@@ -848,49 +1111,120 @@ function buildReadingEndText(examList){
 }
 function buildExamStartText(examList){
   const fr=announceLang==='fr';
-  const base=fr?"L'examen commence.":"The exam has started.";
+  const exam=examList[0]||null;
+  const base=buildAnnouncementBase('examStart',{exam,now:new Date()});
+  if(!base)return null;
   const allRunning=exams.filter(e=>e.status==='running');
   if(examList.length===0||examList.length>=allRunning.length)return base;
   const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
   return (fr?`Pour ${list} : `:`For ${list}: `)+base;
 }
+function buildAlertTemplateText(event,minutes,timerContexts){
+  // Build base from template with restant token
+  const baseFromTemplate=renderTemplate(event,{minutes});
+  if(!baseFromTemplate)return null;
+  // Apply prefix logic if needed (multiple exams/extra time)
+  const fr=announceLang==='fr';
+  if(!timerContexts||timerContexts.length===0)return baseFromTemplate;
+  const runningExams=exams.filter(e=>e.status==='running');
+  const totalActiveTimers=runningExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length,0);
+  const hasExtra=timerContexts.some(c=>c.isExtra);
+  if(runningExams.length<=1&&!hasExtra)return baseFromTemplate;
+  if(timerContexts.length===totalActiveTimers&&!hasExtra)return baseFromTemplate;
+  const examGroups={};
+  timerContexts.forEach(({examTitle,timerLabel,isExtra})=>{if(!examGroups[examTitle])examGroups[examTitle]=[];if(isExtra)examGroups[examTitle].push(timerLabel);});
+  const allExamsCovered=Object.keys(examGroups).length>=runningExams.length;
+  const parts=Object.entries(examGroups).map(([title,extras])=>{
+    if(allExamsCovered)return extras.length?(fr?`le temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
+  }).filter(Boolean);
+  if(parts.length===0)return baseFromTemplate;
+  return (fr?`Pour ${joinList(parts,fr)} : `:`For ${joinList(parts,fr)}: `)+baseFromTemplate;
+}
+function buildEndTemplateText(endBatch){
+  const fr=announceLang==='fr';
+  const base=renderTemplate('end',{});
+  if(!base)return null;
+  const runningExams=exams.filter(e=>e.status==='running');
+  const totalTimers=runningExams.reduce((n,e)=>n+e.timers.length,0);
+  const anyExtra=endBatch.some(({timer})=>timer.label!=='Principal');
+  if(endBatch.length>=totalTimers&&!anyExtra)return base;
+  const groups={};
+  endBatch.forEach(({exam,timer})=>{if(!groups[exam.title])groups[exam.title]=[];if(timer.label!=='Principal')groups[exam.title].push(timer.label);});
+  const allExamsCovered=Object.keys(groups).length>=runningExams.length;
+  const parts=Object.entries(groups).map(([title,extras])=>{
+    if(allExamsCovered)return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
+  }).filter(Boolean);
+  if(parts.length===0)return base;
+  const prefix=fr?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `):`For ${joinList(parts,fr)}: `;
+  return prefix+base;
+}
 
-// ── ALERT SOUNDS ──
-function alertSound(text,examIds,timerIds){
-  if(audioMode==='silence')return;
-  announce(text,{interrupt:true,examIds,timerIds});
-  beep(880,.18); setTimeout(()=>beep(1100,.18),220);
+// Helper: fire IB announcements for a given event across a list of exams
+function ibAnnounce(examList, event, interrupt=false, examIds=null){
+  if(audioMode!=='voice')return;
+  const now=new Date();
+  const allRunning=exams.filter(e=>e.status==='running'||e.status==='reading');
+  const groups=ibGroupAnnouncements(examList, event, now);
+  const ids=examIds||examList.map(e=>e.id);
+  groups.forEach(group=>{
+    const text=ibBuildAnnouncement(group, allRunning);
+    announce(text,{interrupt,examIds:ids});
+  });
 }
-function alert30Sound(text,examIds,timerIds){
+
+function alertSound(text,examIds){
+  if(audioMode==='silence')return;
+  if(audioMode==='voice'){
+    if(ibMode){
+      if(typeof text==='string')announce(text,{interrupt:true,examIds});
+    } else {
+      announce(text,{interrupt:true,examIds});
+    }
+  }
+  beep(880,.18);setTimeout(()=>beep(1100,.18),220);
+}
+function alert30Sound(text,examIds){
   if(audioMode==='silence'||!alert30Enabled)return;
-  announce(text,{interrupt:true,examIds,timerIds});
-  beep(660,.14); setTimeout(()=>beep(780,.14),170);
+  if(audioMode==='voice'){
+    if(typeof text==='string')announce(text,{interrupt:true,examIds});
+  }
+  beep(660,.14);setTimeout(()=>beep(780,.14),170);
 }
-function endSound(text,examIds,timerIds){
+function endSound(text,examIds){
   if(audioMode==='silence')return;
-  announce(text,{interrupt:true,examIds,timerIds});
-  beep(660,.2); setTimeout(()=>beep(880,.2),250); setTimeout(()=>beep(1100,.35),500);
+  if(audioMode==='voice'&&typeof text==='string')announce(text,{interrupt:true,examIds});
+  beep(660,.2);setTimeout(()=>beep(880,.2),250);setTimeout(()=>beep(1100,.35),500);
 }
 function startReadingSound(examList){
   if(audioMode==='silence')return;
-  const ids=examList.map(e=>e.id);
-  if(ibMode)ibAnnounce(examList,'readingStart',false,ids);
-  else announce(buildReadingStartText(examList),{examIds:ids});
-  beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360);
+  if(audioMode==='voice'){
+    const ids=examList.map(e=>e.id);
+    if(ibMode)ibAnnounce(examList,'readingStart',false,ids);
+    else announce(buildReadingStartText(examList),{examIds:ids});
+  }
+  beep(523,.15);setTimeout(()=>beep(659,.15),180);setTimeout(()=>beep(784,.15),360);
 }
 function endReadingSound(examList){
   if(audioMode==='silence')return;
-  const ids=examList.map(e=>e.id);
-  if(ibMode)ibAnnounce(examList,'readingEnd',false,ids);
-  else announce(buildReadingEndText(examList),{examIds:ids});
-  beep(784,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(523,.2),360);
+  if(audioMode==='voice'){
+    const ids=examList.map(e=>e.id);
+    if(ibMode)ibAnnounce(examList,'readingEnd',false,ids);
+    else announce(buildReadingEndText(examList),{examIds:ids});
+  }
+  beep(784,.15);setTimeout(()=>beep(659,.15),180);setTimeout(()=>beep(523,.2),360);
 }
 function startExamSound(examList){
   if(audioMode==='silence')return;
-  const ids=examList.map(e=>e.id);
-  if(ibMode)ibAnnounce(examList,'examStart',false,ids);
-  else announce(buildExamStartText(examList),{examIds:ids});
-  beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360); setTimeout(()=>beep(1047,.3),540);
+  if(audioMode==='voice'){
+    const ids=examList.map(e=>e.id);
+    if(ibMode)ibAnnounce(examList,'examStart',false,ids);
+    else announce(buildExamStartText(examList),{examIds:ids});
+  }
+  beep(523,.15);setTimeout(()=>beep(659,.15),180);setTimeout(()=>beep(784,.15),360);setTimeout(()=>beep(1047,.3),540);
 }
 
 // Parse a ratio string like "25%", "1/3", "33.3%", "0.25" → decimal
@@ -941,6 +1275,7 @@ function buildExamObj(def, readingOnOverride, readingMinsOverride){
     timers.push({id:`${def.id}-t50`,label:'+'+l2,total,left:total,done:false,
       alerted:false,alerted30:false,endAlerted:false,ratio:1+r2,r:RADII[ri++]});
   }
+  // Read ibType from DOM (may have changed since addExam)
   const ibTypeSel=document.getElementById('inp-ibtype-'+def.id);
   if(ibTypeSel)def.ibType=ibTypeSel.value;
   return{id:def.id,title,timers,status:'waiting',readingOn:rOn,readingTotal:rTotal,readingLeft:rTotal,readingAlerted:false,ibType:def.ibType||'ns'};
@@ -971,11 +1306,12 @@ function fmtPercent(r, originalStr){
 
 // ── START ALL (from setup) ──
 function startAll(){
+  warmUpSpeech();
   alertSecs=(parseInt(document.getElementById('inp-alert').value)||5)*60;
   ALERT_30=alert30Enabled?(parseInt(document.getElementById('inp-alert30').value)||30)*60:0;
+  // Save reading mins and extra time defaults before starting
+  readingOn=!document.getElementById('inp-reading')?.disabled;
   savePrefs();
-  // Warm up speech from this user gesture
-  if(audioMode==='voice') _unlockSpeechNow();
   exams=[];
   examDefs.forEach(def=>{
     const obj=buildExamObj(def);if(obj)exams.push(obj);
@@ -1002,22 +1338,17 @@ function startAll(){
 }
 
 // ── LAUNCH A SINGLE EXAM ──
-function _unlockSpeechNow(){
-  // No-op: iOS doesn't need pre-unlocking for speechSynthesis
-}
-
 function launchExam(examId){
-  _unlockSpeechNow();
   const exam=exams.find(e=>e.id===examId);
   if(!exam||exam.status!=='waiting')return;
   if(exam.readingOn){
     exam.status='reading';
     renderExamCol(exam);
-    setTimeout(()=>startReadingSound([exam]), 200);
+    setTimeout(()=>startReadingSound([exam]),100);
   } else {
     exam.status='running';
     renderExamCol(exam);
-    setTimeout(()=>startExamSound([exam]), 200);
+    setTimeout(()=>startExamSound([exam]),100);
   }
   ensureInterval();
   refreshGlobalControls();
@@ -1025,15 +1356,15 @@ function launchExam(examId){
 
 // ── LAUNCH ALL WAITING ──
 function launchAllWaiting(){
-  _unlockSpeechNow();
   const waiting=exams.filter(e=>e.status==='waiting');
   const toRead=[], toRun=[];
   waiting.forEach(e=>{
     if(e.readingOn){e.status='reading';renderExamCol(e);toRead.push(e);}
     else{e.status='running';renderExamCol(e);toRun.push(e);}
   });
-  if(toRead.length>0) setTimeout(()=>startReadingSound(toRead), 200);
-  if(toRun.length>0)  setTimeout(()=>startExamSound(toRun), toRead.length>0?1800:200);
+  // Single announcement per group, no per-exam staggering
+  if(toRead.length>0) setTimeout(()=>startReadingSound(toRead),100);
+  if(toRun.length>0)  setTimeout(()=>startExamSound(toRun), toRead.length>0?1800:100);
   ensureInterval();
   refreshGlobalControls();
 }
@@ -1069,17 +1400,16 @@ function colHTML(exam){
     // Reading preview
     const readingPreview = exam.readingOn ? `
       <div class="col-reading-phase" style="opacity:.5;margin-bottom:10px">
-        <div class="col-reading-label">Temps de lecture</div>
+        <div class="col-reading-label">${'Lecture'}</div>
         <div class="col-reading-disp">${fmtTime(exam.readingTotal)}</div>
       </div>` : '';
-    // Timer preview (greyed, static)
-    const timersPreview = exam.timers.map(t=>`
+    const timersPreview = exam.timers.map(t2=>`
       <div class="timer-block" style="opacity:.35">
-        <div>${makeSVG(t.r, 'prev-'+t.id)}</div>
+        <div>${makeSVG(t2.r, 'prev-'+t2.id)}</div>
         <div style="min-width:0;flex:1">
-          <div class="t-label">${t.label}</div>
-          <div class="t-display greyed">${fmtTime(t.left)}</div>
-          <div class="t-total">${fmtHuman(t.total)}</div>
+          <div class="t-label">${t2.label}</div>
+          <div class="t-display greyed">${fmtTime(t2.left)}</div>
+          <div class="t-total">${fmtHuman(t2.total)}</div>
         </div>
       </div>`).join('');
     inner=`${readingPreview}
@@ -1087,38 +1417,42 @@ function colHTML(exam){
       <div style="margin-top:auto;padding-top:12px">
         <button class="col-start-btn" style="width:100%;justify-content:center" onclick="launchExam(${exam.id})">
           <svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:#fff"><polygon points="5 3 19 12 5 21"/></svg>
-          Démarrer
+          ${'Démarrer'}
         </button>
       </div>`;
   } else if(exam.status==='reading'){
-    const timersHTML=exam.timers.map(t=>`
-      <div class="timer-block" id="blk-${t.id}">
-        <div>${makeSVG(t.r,t.id)}</div>
+    const timersHTML=exam.timers.map(t2=>`
+      <div class="timer-block" id="blk-${t2.id}">
+        <div>${makeSVG(t2.r,t2.id)}</div>
         <div style="min-width:0;flex:1">
-          <div class="t-label">${t.label}</div>
-          <div class="t-display greyed" id="disp-${t.id}">${fmtTime(t.left)}</div>
-          <div class="t-total">${fmtHuman(t.total)}</div>
+          <div class="t-label">${t2.label}</div>
+          <div class="t-display greyed" id="disp-${t2.id}">${fmtTime(t2.left)}</div>
+          <div class="t-total">${fmtHuman(t2.total)}</div>
         </div>
       </div>`).join('');
     inner=`<div class="col-reading-phase" id="colread-${exam.id}">
-        <div class="col-reading-label">Temps de lecture</div>
+        <div class="col-reading-label">${'Lecture en cours'}</div>
         <div class="col-reading-disp" id="colread-disp-${exam.id}">${fmtTime(exam.readingLeft)}</div>
       </div>
       ${timersHTML}`;
   } else {
     // running
-    const timersHTML=exam.timers.map(t=>`
-      <div class="timer-block" id="blk-${t.id}">
-        <div>${makeSVG(t.r,t.id)}</div>
+    const timersHTML=exam.timers.map(t2=>`
+      <div class="timer-block" id="blk-${t2.id}">
+        <div>${makeSVG(t2.r,t2.id)}</div>
         <div style="min-width:0;flex:1">
-          <div class="t-label" id="lbl-${t.id}">${t.label}</div>
-          <div class="t-display" id="disp-${t.id}">${fmtTime(t.left)}</div>
-          <div class="t-total">${fmtHuman(t.total)}</div>
-          ${milestonesHTML(t)}
+          <div class="t-label" id="lbl-${t2.id}">${t2.label}</div>
+          <div class="t-display" id="disp-${t2.id}">${fmtTime(t2.left)}</div>
+          <div class="t-total">${fmtHuman(t2.total)}</div>
+          ${milestonesHTML(t2)}
         </div>
       </div>`).join('');
     inner=`${timersHTML}
       <div class="col-controls" id="colctrl-${exam.id}">
+        <button class="col-btn" id="col-pause-${exam.id}" onclick="toggleExamPause(${exam.id})" style="border-color:#3a7bd5;color:#3a7bd5">
+          <svg class="icon" id="col-pause-icon-${exam.id}" viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          <span id="col-pause-label-${exam.id}">${'Pause'}</span>
+        </button>
         <button class="col-btn" onclick="adjustExamTime(${exam.id},-60)"><svg class="icon" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>1 min</button>
         <button class="col-btn" onclick="adjustExamTime(${exam.id},-600)"><svg class="icon" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>10 min</button>
         <button class="col-btn" onclick="adjustExamTime(${exam.id},60)"><svg class="icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>1 min</button>
@@ -1140,7 +1474,7 @@ function refreshGlobalControls(){
       const b=document.createElement('button');
       b.className='ctrl-btn green';b.id='start-all-waiting-btn';
       b.onclick=launchAllWaiting;
-      b.innerHTML=`<svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:#fff"><polygon points="5 3 19 12 5 21"/></svg> Démarrer tous les examens en attente`;
+      b.innerHTML=`<svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:#fff"><polygon points="5 3 19 12 5 21"/></svg> ${'Démarrer tous'}`;
       document.getElementById('global-controls').appendChild(b);
     }
   } else {
@@ -1155,14 +1489,15 @@ function refreshTimers(){
       const rd=document.getElementById('colread-disp-'+exam.id);
       if(rd){rd.textContent=fmtTime(exam.readingLeft);rd.className='col-reading-disp'+(exam.readingLeft<=alertSecs?' warning':'');}
     } else if(exam.status==='running'){
-      exam.timers.forEach(t=>{
-        const state=timerState(t);
-        const blk=document.getElementById('blk-'+t.id);if(blk)blk.className='timer-block'+(t.done?' done-blk':'');
-        const disp=document.getElementById('disp-'+t.id);
-        if(disp){disp.style.color='';disp.className='t-display'+(state==='warning'?' warning':state==='near30'?' near30':'')+(t.done?' done-txt':'');disp.textContent=fmtTime(t.left);}
-        const lbl=document.getElementById('lbl-'+t.id);if(lbl)lbl.innerHTML=t.label+(t.done?'<span class="done-badge">Terminé</span>':'');
-        setArc(t.id,t.left,t.total,state,t.r);
-        refreshMilestones(t);
+      exam.timers.forEach(timer=>{
+        const state=timerState(timer);
+        const blk=document.getElementById('blk-'+timer.id);if(blk)blk.className='timer-block'+(timer.done?' done-blk':'');
+        const disp=document.getElementById('disp-'+timer.id);
+        if(disp){disp.style.color='';disp.className='t-display'+(state==='warning'?' warning':state==='near30'?' near30':'')+(timer.done?' done-txt':'');disp.textContent=fmtTime(timer.left);}
+        const lbl=document.getElementById('lbl-'+timer.id);
+        if(lbl)lbl.innerHTML=timer.label+(timer.done?`<span class="done-badge">${'Terminé'}</span>`:'');
+        setArc(timer.id,timer.left,timer.total,state,timer.r);
+        refreshMilestones(timer);
       });
     }
   });
@@ -1187,15 +1522,15 @@ function refreshAdjustLiveValues(){
 // ── TICK ──
 function tick(){
   if(paused)return;
-
   const alert30Batch=[], alertBatch=[], endBatch=[];
   const readingEndBatch=[], examStartBatch=[];
 
   exams.forEach(exam=>{
+    if(examPausedSet.has(exam.id))return; // individually paused
     if(exam.status==='reading'){
       exam.readingLeft--;
       if(exam.readingLeft<=0){
-        exam.status='running'; exam.readingLeft=0;
+        exam.status='running';exam.readingLeft=0;
         renderExamCol(exam);
         readingEndBatch.push(exam);
         examStartBatch.push(exam);
@@ -1206,38 +1541,38 @@ function tick(){
         if(t.done)return;
         if(t.left>0){
           t.left--;
-          const isExtra = t.label !== 'Principal';
+          const isExtra=t.label!=='Principal';
           if(t.left<=ALERT_30&&!t.alerted30){
             t.alerted30=true;
-            alert30Batch.push({exam,examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60),timerId:t.id});
+            alert30Batch.push({exam,examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60)});
           }
           if(t.left<=alertSecs&&!t.alerted){
             t.alerted=true;
-            alertBatch.push({exam,examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60),timerId:t.id});
+            alertBatch.push({exam,examTitle:exam.title,timerLabel:t.label,isExtra,minutes:Math.round(t.left/60)});
           }
-          if(t.left===0&&!t.endAlerted){
-            t.endAlerted=true; t.done=true;
-            endBatch.push({exam,timer:t});
-          }
+          if(t.left===0&&!t.endAlerted){t.endAlerted=true;t.done=true;endBatch.push({exam,timer:t});}
         }
       });
     }
   });
 
+  // Reading end + exam start
   if(readingEndBatch.length>0){
     endReadingSound(readingEndBatch);
-    startExamSound(examStartBatch); // queued, plays after endReadingSound finishes
+    startExamSound(examStartBatch);
   }
-  // Fire batched alerts
+
+  // Alert 30
   if(alert30Batch.length>0){
     const eIds=[...new Set(alert30Batch.map(x=>x.exam.id))];
-    const tIds=alert30Batch.map(x=>x.timerId).filter(Boolean);
-    if(ibMode){
+    const timerIds=alert30Batch.map(x=>{const tm=x.exam.timers.find(t=>t.label===x.timerLabel);return tm?tm.id:null;}).filter(Boolean);
+    if(ibMode&&audioMode==='voice'){
       const examList=[...new Set(alert30Batch.map(x=>x.exam))];
       const now=new Date(),allR=exams.filter(e=>e.status==='running');
-      ibGroupAnnouncements(examList,'alert30',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds:tIds}));
-    } else {
-      alert30Sound(buildAlertText(alert30Batch[0].minutes, alert30Batch), eIds, tIds);
+      ibGroupAnnouncements(examList,'alert30',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds}));
+    } else if(audioMode==='voice'){
+      const txt=buildAlertTemplateText('alert30',alert30Batch[0].minutes,alert30Batch);
+      if(txt)announce(txt,{interrupt:true,examIds:eIds,timerIds});
     }
     if(audioMode!=='silence'){beep(660,.14);setTimeout(()=>beep(780,.14),170);}
   }
@@ -1245,39 +1580,38 @@ function tick(){
     const delay=alert30Batch.length>0?3000:0;
     setTimeout(()=>{
       const eIds=[...new Set(alertBatch.map(x=>x.exam.id))];
-      const tIds=alertBatch.map(x=>x.timerId).filter(Boolean);
-      if(ibMode){
+      const timerIds=alertBatch.map(x=>{const tm=x.exam.timers.find(t=>t.label===x.timerLabel);return tm?tm.id:null;}).filter(Boolean);
+      if(ibMode&&audioMode==='voice'){
         const examList=[...new Set(alertBatch.map(x=>x.exam))];
         const now=new Date(),allR=exams.filter(e=>e.status==='running');
-        ibGroupAnnouncements(examList,'alert5',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds:tIds}));
-      } else {
-        alertSound(buildAlertText(alertBatch[0].minutes, alertBatch), eIds, tIds);
+        ibGroupAnnouncements(examList,'alert5',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds}));
+      } else if(audioMode==='voice'){
+        const txt=buildAlertTemplateText('alert5',alertBatch[0].minutes,alertBatch);
+        if(txt)announce(txt,{interrupt:true,examIds:eIds,timerIds});
       }
       if(audioMode!=='silence'){beep(880,.18);setTimeout(()=>beep(1100,.18),220);}
-    }, delay);
+    },delay);
   }
   if(endBatch.length>0){
     const delay=(readingEndBatch.length||alert30Batch.length||alertBatch.length)?4000:0;
     setTimeout(()=>{
       const eIds=[...new Set(endBatch.map(x=>x.exam.id))];
-      const tIds=endBatch.map(x=>x.timer.id);
-      if(ibMode){
+      const timerIds=endBatch.map(x=>x.timer.id);
+      if(ibMode&&audioMode==='voice'){
         const examList=[...new Set(endBatch.map(x=>x.exam))];
         const now=new Date(),allR=exams.filter(e=>e.status==='running');
-        ibGroupAnnouncements(examList,'end',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds:tIds}));
-      } else {
-        endSound(buildCombinedEndText(endBatch), eIds, tIds);
+        ibGroupAnnouncements(examList,'end',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds}));
+      } else if(audioMode==='voice'){
+        const txt=buildEndTemplateText(endBatch);
+        if(txt)announce(txt,{interrupt:true,examIds:eIds,timerIds});
       }
       if(audioMode!=='silence'){beep(660,.2);setTimeout(()=>beep(880,.2),250);setTimeout(()=>beep(1100,.35),500);}
-    }, delay);
+    },delay);
   }
 
   refreshTimers();
-  const anyActive=exams.some(e=>
-    e.status==='reading' ||
-    (e.status==='running' && e.timers.some(t=>!t.done))
-  );
-  if(!anyActive && exams.every(e=>e.status!=='waiting')) clearInterval(intervalId);
+  const anyActive=exams.some(e=>e.status==='reading'||(e.status==='running'&&e.timers.some(t=>!t.done)));
+  if(!anyActive&&exams.every(e=>e.status!=='waiting'))clearInterval(intervalId);
 }
 
 // ── CONTROLS ──
@@ -1292,10 +1626,31 @@ function togglePause(){
   syncPauseButtons();
   if(paused){
     releaseWakeLock();
+    // Pause any ongoing speech
     if(window.speechSynthesis)window.speechSynthesis.pause();
   } else {
     acquireWakeLock();
     if(window.speechSynthesis)window.speechSynthesis.resume();
+  }
+}
+
+function toggleExamPause(examId){
+  const isPaused=examPausedSet.has(examId);
+  if(isPaused) examPausedSet.delete(examId);
+  else examPausedSet.add(examId);
+  const btn=document.getElementById('col-pause-'+examId);
+  const lbl=document.getElementById('col-pause-label-'+examId);
+  const ico=document.getElementById('col-pause-icon-'+examId);
+  if(!btn)return;
+  const nowPaused=examPausedSet.has(examId);
+  if(nowPaused){
+    btn.style.background='#eaf1fb';
+    if(lbl)lbl.textContent='Reprendre';
+    if(ico)ico.innerHTML='<polygon points="5 3 19 12 5 21" style="fill:currentColor;stroke:none"/>';
+  } else {
+    btn.style.background='';
+    if(lbl)lbl.textContent='Pause';
+    if(ico)ico.innerHTML='<rect x="6" y="4" width="4" height="16" style="fill:currentColor;stroke:none"/><rect x="14" y="4" width="4" height="16" style="fill:currentColor;stroke:none"/>';
   }
 }
 
@@ -1347,7 +1702,7 @@ function buildAdjustPanel(){
           style="background:none;border:none;cursor:pointer;color:#ccc;font-size:15px;padding:2px 4px;transition:color .12s"
           onmouseover="this.style.color='#a03030'" onmouseout="this.style.color='#ccc'">🗑</button>
       </div>
-      <div style="font-size:12px;color:#bbb;padding:6px 0">En attente — pas encore démarré</div>
+      <div style="font-size:12px;color:#bbb;padding:6px 0">${'En attente'}</div>
     </div>`;
       return;
     }
@@ -1379,6 +1734,13 @@ function buildAdjustPanel(){
           style="background:none;border:none;cursor:pointer;color:#ccc;font-size:15px;padding:2px 4px;transition:color .12s"
           onmouseover="this.style.color='#a03030'" onmouseout="this.style.color='#ccc'">🗑</button>
       </div>
+      ${ibMode?`<div style="margin-bottom:8px">
+        <label style="font-size:11px;color:#3a7bd5;font-weight:600;text-transform:uppercase;letter-spacing:.04em">${'Type d\'épreuve IB'}</label>
+        <select style="width:100%;margin-top:4px;padding:5px 8px;border:1px solid #d0cdc6;border-radius:7px;font-size:12px;font-family:inherit;color:#1a1a18;background:#fff;outline:none"
+          onchange="exams.find(e=>e.id===${exam.id}).ibType=this.value">
+          ${[['ns','Non-structuré'],['ss','Structuré/semi-structuré'],['mcq','QCM'],['acq','Acquisition de langues']].map(([v,l])=>`<option value="${v}" ${exam.ibType===v?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>`:''}
       ${active.map(t=>`<div class="adj-timer-row">
         <div class="adj-timer-label">${t.label}</div>
         <div class="adj-timer-live" id="adj-live-${t.id}">${fmtTime(t.left)}</div>
@@ -1391,7 +1753,7 @@ function buildAdjustPanel(){
       </div>`).join('')}
     </div>`;
   });
-  if(!html)html='<p style="font-size:13px;color:#999;padding:8px 0">Aucun timer actif.</p>';
+  if(!html)html=`<p style="font-size:13px;color:#999;padding:8px 0">${'Aucun minuteur actif.'}</p>`;
   body.innerHTML=html;
 }
 
@@ -1456,17 +1818,17 @@ function adjReading(examId,d){
 function buildAddPanel(){
   newExamTog={main:true,t25:true,t50:true};newExamReadingOn=true;
   document.getElementById('panel-body').innerHTML=`
-    <div class="panel-section-title">Nouvel examen</div>
+    <div class="panel-section-title">${'Nouvel examen'}</div>
     <div class="panel-field">
-      <label>Titre</label>
-      <input type="text" id="new-title" placeholder="ex. Français">
+      <label>${'Nom de l\'épreuve'}</label>
+      <input type="text" id="new-title" placeholder="${'ex: Maths HL'}">
     </div>
     <div class="panel-time-row">
-      <div class="panel-field"><label>Heures</label><input type="number" id="new-h" min="0" max="23" value="0" oninput="checkNewExam()"></div>
-      <div class="panel-field"><label>Minutes</label><input type="number" id="new-m" min="0" max="59" value="60" oninput="checkNewExam()"></div>
-      <div class="panel-field"><label>Secondes</label><input type="number" id="new-s" min="0" max="59" value="0" oninput="checkNewExam()"></div>
+      <div class="panel-field"><label>${'H'}</label><input type="number" id="new-h" min="0" max="23" value="0" oninput="checkNewExam()"></div>
+      <div class="panel-field"><label>${'Min'}</label><input type="number" id="new-m" min="0" max="59" value="60" oninput="checkNewExam()"></div>
+      <div class="panel-field"><label>${'Sec'}</label><input type="number" id="new-s" min="0" max="59" value="0" oninput="checkNewExam()"></div>
     </div>
-    <div class="section-title" style="margin-bottom:6px;font-size:12px">Temps supplémentaires</div>
+    <div class="section-title" style="margin-bottom:6px;font-size:12px">${'Temps supplémentaire'}</div>
     <div class="extra-toggles" style="margin-bottom:12px">
       <div class="extra-toggle on" id="new-et-main" onclick="toggleNewExtra('main')"><div class="sw-sm on"></div>Principal</div>
       <div class="extra-toggle on" id="new-et-t25" onclick="toggleNewExtra('t25')">
@@ -1481,9 +1843,9 @@ function buildAddPanel(){
       </div>
     </div>
     <div class="panel-divider"></div>
-    <div class="panel-section-title">Temps de lecture</div>
+    <div class="panel-section-title">${'Temps de lecture'}</div>
     <div class="panel-reading-row on" id="new-reading-row" onclick="toggleNewReading(event)">
-      <div><div class="panel-reading-name">Temps de lecture</div></div>
+      <div><div class="panel-reading-name">${'Lecture'}</div></div>
       <div class="panel-reading-ctrls" onclick="event.stopPropagation()">
         <input type="number" class="panel-reading-inp" id="new-reading-min" min="1" max="60" value="5">
         <span class="panel-reading-label">min</span>
@@ -1493,7 +1855,7 @@ function buildAddPanel(){
     <div class="panel-divider"></div>
     <button class="panel-confirm-btn" id="new-confirm-btn" onclick="confirmNewExam()" disabled>
       <svg class="icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-      Confirmer et ajouter
+      ${'Confirmer'}
     </button>`;
   checkNewExam();
 }
@@ -1606,7 +1968,7 @@ function toggleFullscreen(){if(!document.fullscreenElement)document.documentElem
 document.addEventListener('fullscreenchange',()=>{
   const on=!!document.fullscreenElement;
   document.getElementById('fullscreen-icon').innerHTML=on?'<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>':'<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>';
-  document.getElementById('fullscreen-label').textContent=on?'Quitter plein écran':'Plein écran';
+  document.getElementById('fullscreen-label').textContent=on?'Quitter le plein écran':'Plein écran';
   document.body.classList.toggle('is-fullscreen',on);
   setTimeout(()=>applyFullscreenSizes(on),60);
 });
@@ -1627,12 +1989,35 @@ function releaseWakeLock(){
 // Re-acquire after tab becomes visible again (iOS/mobile releases on hide)
 // ── QUIT ──
 function confirmQuit(){
-  if(!confirm('Quitter les minuteurs et revenir aux réglages ?'))return;
+  // confirm() doesn't work in iOS standalone PWA — use inline UI
+  const existing=document.getElementById('quit-confirm-overlay');
+  if(existing){existing.remove();return;}
+  const overlay=document.createElement('div');
+  overlay.id='quit-confirm-overlay';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.innerHTML='<div style="background:#fff;border-radius:16px;padding:24px;max-width:320px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)">'
+    +'<p style="font-size:16px;font-weight:600;color:#1a1a18;margin:0 0 8px">Quitter ?</p>'
+    +'<p style="font-size:14px;color:#666;margin:0 0 20px">Quitter les minuteurs et revenir aux réglages ?</p>'
+    +'<div style="display:flex;gap:10px">'
+    +'<button onclick="document.getElementById(\'quit-confirm-overlay\').remove()" '
+    +'style="flex:1;padding:10px;border:1px solid #d0cdc6;border-radius:10px;background:#fff;font-size:15px;font-family:inherit;cursor:pointer">Annuler</button>'
+    +'<button onclick="doQuit()" '
+    +'style="flex:1;padding:10px;border:none;border-radius:10px;background:#c0392b;color:#fff;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer">Quitter</button>'
+    +'</div></div>';
+  document.body.appendChild(overlay);
+}
+
+function doQuit(){
+  const overlay=document.getElementById('quit-confirm-overlay');
+  if(overlay)overlay.remove();
   if(intervalId)clearInterval(intervalId);if(clockInterval)clearInterval(clockInterval);
+  intervalId=null;clockInterval=null;
   releaseWakeLock();
-  _stopAudioSession();
   if(window.speechSynthesis)window.speechSynthesis.cancel();
-  paused=false;closePanel();
+  examPausedSet.clear();
+  paused=false;
+  // Reset state for next session
+  exams=[];
   document.getElementById('timer-view').style.display='none';
   document.getElementById('live-clock').style.display='none';
   document.getElementById('setup-panel').style.display='block';
@@ -1640,38 +2025,43 @@ function confirmQuit(){
   document.getElementById('quit-btn').classList.remove('visible');
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
   syncPauseButtons();
+  renderExamList();
 }
 
 // ── INIT ──
-function savePrefs(){
-  try{
-    localStorage.setItem('hl-prefs',JSON.stringify({
-      announceLang, audioMode, alert30Enabled, ibMode,
-      alertSecs, ALERT_30,
-      readingOn,
-      defaultP1:examDefs[0]?.p1||'25%',
-      defaultP2:examDefs[0]?.p2||'50%',
-    }));
-  }catch(e){}
-}
-
-(function loadAndApplyPrefs(){
+// Load saved preferences from localStorage
+(function loadPrefs(){
   try{
     const p=JSON.parse(localStorage.getItem('hl-prefs')||'{}');
-    if(p.announceLang)announceLang=p.announceLang;
+    if(p.uiLang)uiLang=p.uiLang;
     if(p.audioMode)audioMode=p.audioMode;
+    if(p.announceLang)announceLang=p.announceLang;
+    if(typeof p.readingOn==='boolean')readingOn=p.readingOn;
     if(typeof p.alert30Enabled==='boolean')alert30Enabled=p.alert30Enabled;
+    if(typeof p.ibMode==='boolean')ibMode=p.ibMode;
     if(p.alertSecs)alertSecs=p.alertSecs;
     if(p.ALERT_30)ALERT_30=p.ALERT_30;
-    if(typeof p.readingOn==='boolean')readingOn=p.readingOn;
-    if(typeof p.ibMode==='boolean')ibMode=p.ibMode;
+    // Extra time percentages default
+    if(p.defaultP1)window._defaultP1=p.defaultP1;
     if(p.defaultP2)window._defaultP2=p.defaultP2;
   }catch(e){}
 })();
 
+function savePrefs(){
+  try{
+    const p={
+      uiLang,audioMode,announceLang,readingOn,alert30Enabled,ibMode,
+      alertSecs,ALERT_30,
+      defaultP1:examDefs[0]?.p1||'25%',
+      defaultP2:examDefs[0]?.p2||'50%',
+    };
+    localStorage.setItem('hl-prefs',JSON.stringify(p));
+  }catch(e){}
+}
 
 
 addExam();
+loadTemplates();
 
 (function applyPrefsToUI(){
   // Announce language buttons
