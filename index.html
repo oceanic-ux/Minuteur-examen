@@ -463,6 +463,7 @@ function ibAnnounce(examList,event,interrupt=false,examIds=null){
 
 function addExam(){
   examDefs.forEach(def=>{
+    const el=document.getElementById('inp-title-'+def.id);
     if(el)def.title=el.value;
   });
   const eid=nextExamId++;
@@ -966,6 +967,16 @@ function startAll(){
   alertSecs=(parseInt(document.getElementById('inp-alert').value)||5)*60;
   ALERT_30=alert30Enabled?(parseInt(document.getElementById('inp-alert30').value)||30)*60:0;
   savePrefs();
+  // Unlock speech synthesis from this user gesture (iOS requires this)
+  if(audioMode==='voice'&&window.speechSynthesis){
+    try{
+      window.speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance('\u200B');
+      u.volume=0; u.rate=1;
+      u.onend=()=>{_warmingUp=false;};
+      window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
   exams=[];
   examDefs.forEach(def=>{
     const obj=buildExamObj(def);if(obj)exams.push(obj);
@@ -992,17 +1003,27 @@ function startAll(){
 }
 
 // ── LAUNCH A SINGLE EXAM ──
+function _unlockSpeechNow(){
+  if(audioMode!=='voice'||!window.speechSynthesis)return;
+  try{
+    const u=new SpeechSynthesisUtterance('\u200B');
+    u.volume=0;u.rate=1;
+    window.speechSynthesis.speak(u);
+  }catch(e){}
+}
+
 function launchExam(examId){
+  _unlockSpeechNow();
   const exam=exams.find(e=>e.id===examId);
   if(!exam||exam.status!=='waiting')return;
   if(exam.readingOn){
     exam.status='reading';
     renderExamCol(exam);
-    setTimeout(()=>startReadingSound([exam]), 100);
+    setTimeout(()=>startReadingSound([exam]), 200);
   } else {
     exam.status='running';
     renderExamCol(exam);
-    setTimeout(()=>startExamSound([exam]), 100);
+    setTimeout(()=>startExamSound([exam]), 200);
   }
   ensureInterval();
   refreshGlobalControls();
@@ -1010,14 +1031,15 @@ function launchExam(examId){
 
 // ── LAUNCH ALL WAITING ──
 function launchAllWaiting(){
+  _unlockSpeechNow();
   const waiting=exams.filter(e=>e.status==='waiting');
   const toRead=[], toRun=[];
   waiting.forEach(e=>{
     if(e.readingOn){e.status='reading';renderExamCol(e);toRead.push(e);}
     else{e.status='running';renderExamCol(e);toRun.push(e);}
   });
-  if(toRead.length>0) setTimeout(()=>startReadingSound(toRead), 100);
-  if(toRun.length>0)  setTimeout(()=>startExamSound(toRun), toRead.length>0?1800:100);
+  if(toRead.length>0) setTimeout(()=>startReadingSound(toRead), 200);
+  if(toRun.length>0)  setTimeout(()=>startExamSound(toRun), toRead.length>0?1800:200);
   ensureInterval();
   refreshGlobalControls();
 }
