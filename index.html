@@ -629,6 +629,25 @@ if(window.speechSynthesis){
   populateVoices();
 }
 
+// ── iOS AUDIO SESSION KEEPALIVE ──
+// iOS suspends audio/speech when no audio is playing. A silent looping audio
+// element keeps the session alive so speechSynthesis works from timer callbacks.
+let _audioSession=null;
+function _startAudioSession(){
+  if(_audioSession)return;
+  try{
+    // Create a 0.1s silent WAV as a data URI
+    const silentWav='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    _audioSession=new Audio(silentWav);
+    _audioSession.loop=true;
+    _audioSession.volume=0;
+    _audioSession.play().catch(()=>{});
+  }catch(e){}
+}
+function _stopAudioSession(){
+  if(_audioSession){try{_audioSession.pause();}catch(e){}_audioSession=null;}
+}
+
 // ── SPEECH SYNTHESIS ──
 let _speechQueue=[], _speechBusy=false, _speechWatchdog=null;
 
@@ -969,6 +988,7 @@ function startAll(){
   savePrefs();
   // Unlock speech synthesis from this user gesture (iOS requires this)
   if(audioMode==='voice'&&window.speechSynthesis){
+    _startAudioSession(); // keep iOS audio session alive
     try{
       window.speechSynthesis.cancel();
       const u=new SpeechSynthesisUtterance('\u200B');
@@ -1005,6 +1025,7 @@ function startAll(){
 // ── LAUNCH A SINGLE EXAM ──
 function _unlockSpeechNow(){
   if(audioMode!=='voice'||!window.speechSynthesis)return;
+  _startAudioSession();
   try{
     const u=new SpeechSynthesisUtterance('\u200B');
     u.volume=0;u.rate=1;
@@ -1296,8 +1317,15 @@ function syncPauseButtons(){
 function togglePause(){
   paused=!paused;
   syncPauseButtons();
-  if(paused)releaseWakeLock();
-  else acquireWakeLock();
+  if(paused){
+    releaseWakeLock();
+    if(_audioSession)_audioSession.pause();
+    if(window.speechSynthesis)window.speechSynthesis.pause();
+  } else {
+    acquireWakeLock();
+    if(_audioSession)_audioSession.play().catch(()=>{});
+    if(window.speechSynthesis)window.speechSynthesis.resume();
+  }
 }
 
 function adjustExamTime(examId,d){
@@ -1631,6 +1659,8 @@ function confirmQuit(){
   if(!confirm('Quitter les minuteurs et revenir aux réglages ?'))return;
   if(intervalId)clearInterval(intervalId);if(clockInterval)clearInterval(clockInterval);
   releaseWakeLock();
+  _stopAudioSession();
+  if(window.speechSynthesis)window.speechSynthesis.cancel();
   paused=false;closePanel();
   document.getElementById('timer-view').style.display='none';
   document.getElementById('live-clock').style.display='none';
