@@ -241,27 +241,48 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
         <span style="font-size:13px;color:#888;flex-shrink:0">min</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
-        <label style="font-size:13px;color:#666;flex:1">Langue des annonces</label>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          <button id="lang-fr" onclick="setLang('fr')"
-            style="padding:5px 14px;border-radius:7px;border:1px solid #3a7bd5;background:#3a7bd5;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500">FR</button>
-          <button id="lang-en" onclick="setLang('en')"
-            style="padding:5px 14px;border-radius:7px;border:1px solid #d0cdc6;background:#fff;color:#666;cursor:pointer;font-size:13px;font-family:inherit">EN</button>
+        <label style="font-size:13px;color:#666;flex:1">Mode audio</label>
+        <div style="display:flex;gap:5px;flex-shrink:0">
+          <button id="amode-silence" onclick="setAudioMode('silence')"
+            style="padding:5px 12px;border-radius:7px;border:1px solid #d0cdc6;background:#fff;color:#666;cursor:pointer;font-size:13px;font-family:inherit;transition:all .12s">
+            🔇 Silence
+          </button>
+          <button id="amode-beep" onclick="setAudioMode('beep')"
+            style="padding:5px 12px;border-radius:7px;border:1px solid #3a7bd5;background:#3a7bd5;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500;transition:all .12s">
+            🔔 Son
+          </button>
+          <button id="amode-voice" onclick="setAudioMode('voice')"
+            style="padding:5px 12px;border-radius:7px;border:1px solid #d0cdc6;background:#fff;color:#666;cursor:pointer;font-size:13px;font-family:inherit;transition:all .12s">
+            🗣 Voix
+          </button>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:10px">
-        <label style="font-size:13px;color:#666;flex:1">Voix</label>
-        <select id="voice-select" style="flex:1;max-width:220px;padding:6px 8px;border:1px solid #d0cdc6;border-radius:8px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none">
-          <option value="">Voix par défaut</option>
-        </select>
+      <!-- Voice options: lang, voice select, IB — visible only in voice mode -->
+      <div id="voice-options" style="display:none;flex-direction:column;gap:8px;padding:10px 14px;border:1px solid #3a7bd5;border-radius:10px;background:#eaf1fb">
+        <div style="display:flex;align-items:center;gap:10px">
+          <label style="font-size:13px;color:#1a4a8a;flex:1">Langue des annonces</label>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button id="lang-fr" onclick="setLang('fr')"
+              style="padding:4px 12px;border-radius:7px;border:1px solid #3a7bd5;background:#3a7bd5;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500">FR</button>
+            <button id="lang-en" onclick="setLang('en')"
+              style="padding:4px 12px;border-radius:7px;border:1px solid #a0b8d8;background:#fff;color:#3a7bd5;cursor:pointer;font-size:13px;font-family:inherit">EN</button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <label style="font-size:13px;color:#1a4a8a;flex:1">Voix</label>
+          <select id="voice-select" style="flex:1;max-width:200px;padding:5px 8px;border:1px solid #a0b8d8;border-radius:8px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none">
+            <option value="">Voix par défaut</option>
+          </select>
+        </div>
+        <div style="height:1px;background:#c0d4ec;margin:2px 0"></div>
+        <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleIBMode()">
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:#1a4a8a">Annonces IB officielles</div>
+            <div style="font-size:11px;color:#5a80b0;margin-top:1px">Textes officiels du Baccalauréat International</div>
+          </div>
+          <div class="sw" id="sw-ib" onclick="event.stopPropagation();toggleIBMode()"></div>
+        </div>
       </div>
-    </div>
-    <div class="option-row" id="silence-row" onclick="toggleSilence()">
-      <div class="option-row-text">
-        <div class="option-row-label">Mode silencieux</div>
-        <div class="option-row-sub">Désactiver toutes les annonces et alertes</div>
-      </div>
-      <div class="sw" id="sw-silence"></div>
     </div>
     <button class="start-btn" id="start-btn" onclick="startAll()">
       <svg class="icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" style="stroke:#fff;fill:none"/></svg>
@@ -300,7 +321,7 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
 
 <script>
 // ══ STATE ══
-let readingOn=true, silentMode=false, alert30Enabled=true;
+let readingOn=true, audioMode='beep', alert30Enabled=true, ibMode=false;
 let alertSecs=300;
 let ALERT_30=1800; // configurable, default 30 min
 let paused=false, intervalId=null, clockInterval=null;
@@ -350,7 +371,21 @@ function refreshMilestones(t){
 // ── SETUP UI ──
 function updateReadingSub(){const v=parseInt(document.getElementById('inp-reading').value)||5;document.getElementById('reading-sub').textContent=v+' minute'+(v>1?'s':'')+' avant le début';}
 function toggleReading(e){if(e)e.stopPropagation();readingOn=!readingOn;const row=document.getElementById('tog-reading'),sw=document.getElementById('sw-reading'),inp=document.getElementById('inp-reading');row.classList.toggle('on',readingOn);sw.classList.toggle('on',readingOn);inp.disabled=!readingOn;}
-function toggleSilence(){silentMode=!silentMode;const sw=document.getElementById('sw-silence'),row=document.getElementById('silence-row');sw.classList.toggle('on',silentMode);row.style.borderColor=silentMode?'#3a7bd5':'';row.style.background=silentMode?'#eaf1fb':'';}
+function setAudioMode(mode){
+  audioMode=mode;
+  ['silence','beep','voice'].forEach(m=>{
+    const btn=document.getElementById('amode-'+m);if(!btn)return;
+    const active=m===mode;
+    btn.style.background  =active?'#3a7bd5':'#fff';
+    btn.style.color       =active?'#fff':'#666';
+    btn.style.borderColor =active?'#3a7bd5':'#d0cdc6';
+    btn.style.fontWeight  =active?'500':'400';
+  });
+  const vo=document.getElementById('voice-options');
+  if(vo)vo.style.display=mode==='voice'?'flex':'none';
+  if(mode==='voice')populateVoices();
+  savePrefs();
+}
 function toggleAlert30(){
   alert30Enabled=!alert30Enabled;
   const sw=document.getElementById('sw-alert30');
@@ -358,10 +393,76 @@ function toggleAlert30(){
   savePrefs();
 }
 
+// ── IB MODE ──
+function toggleIBMode(){
+  ibMode=!ibMode;
+  const sw=document.getElementById('sw-ib');
+  if(sw)sw.classList.toggle('on',ibMode);
+  renderExamList();
+  savePrefs();
+}
+
+function ibText(type,event,lang,exam,now){
+  const fr=lang==='fr';
+  const dur=fmtHuman(exam.timers.find(ti=>ti.label==='Principal')?.total||0);
+  const heure=now?pad(now.getHours())+' h '+pad(now.getMinutes()):'';
+  const heureEn=now?(now.getHours()+':'+(now.getMinutes()<10?'0':'')+now.getMinutes()):'';
+  if(event==='readingStart'){
+    if(type==='mcq')return null;
+    return fr?"Vous pouvez à présent ouvrir votre épreuve d'examen. Votre temps de lecture commence maintenant.":"You may now open your examination paper. Your reading time starts now.";
+  }
+  if(event==='readingEnd'){
+    if(type==='mcq')return null;
+    return fr?`Le temps de lecture est terminé. Vous avez ${dur} pour cette épreuve d'examen. Vous pouvez commencer à écrire. Il est ${heure}.`:`Your reading time is over. You have ${dur} for this examination paper. You may start to write. The time now is ${heureEn}.`;
+  }
+  if(event==='examStart'){
+    if(type!=='mcq')return null;
+    return fr?`Vous pouvez commencer à écrire. Il est ${heure}.`:`You may now start the examination. The time now is ${heureEn}.`;
+  }
+  if(event==='alert30'){
+    if(type==='acq')return null;
+    return fr?"Il vous reste 30 minutes.":"The time remaining is 30 minutes.";
+  }
+  if(event==='alert5'){
+    if(type==='acq')return null;
+    if(type==='ns')return fr?"Il vous reste cinq minutes. Assurez-vous de rayer d'un trait toute partie de votre travail que vous ne voulez pas voir prise en compte lors de la notation. Si cela s'applique à la totalité d'une question, n'oubliez pas de noircir la case contenant le numéro de la question.":"The time remaining is five minutes. Please ensure you draw a line through any work that you do not wish to be marked; if this applies to a whole question, remember to fill in the relevant question number box as well.";
+    if(type==='ss')return fr?"Il vous reste cinq minutes. Assurez-vous de rayer d'un trait toute partie de votre travail que vous ne voulez pas voir prise en compte lors de la notation.":"The time remaining is 5 minutes. Please ensure you draw a line through any work that you do not wish to be marked.";
+    if(type==='mcq')return fr?"Il vous reste cinq minutes.":"The time remaining is five minutes.";
+    return null;
+  }
+  if(event==='end')return fr?"L'épreuve est terminée. Veuillez arrêter d'écrire immédiatement. Il ne vous est pas permis d'ajouter quoi que ce soit à vos réponses ni de les modifier.":"The examination has ended. Please stop writing immediately. Do not make any additions or amendments to your answers.";
+  return null;
+}
+
+function ibGroupAnnouncements(examList,event,now){
+  const groups={};
+  examList.forEach(exam=>{
+    const text=ibText(exam.ibType||'ns',event,announceLang,exam,now);
+    if(!text)return;
+    if(!groups[text])groups[text]=[];
+    groups[text].push(exam);
+  });
+  return Object.entries(groups).map(([text,exams])=>({text,exams}));
+}
+
+function ibBuildAnnouncement(group,allRunningExams){
+  const fr=announceLang==='fr';
+  const prefix=buildPrefix(group.exams,allRunningExams,fr,false);
+  return prefix+group.text;
+}
+
+function ibAnnounce(examList,event,interrupt=false,examIds=null){
+  if(audioMode==='silence')return;
+  const now=new Date();
+  const allRunning=exams.filter(e=>e.status==='running'||e.status==='reading');
+  const ids=examIds||examList.map(e=>e.id);
+  ibGroupAnnouncements(examList,event,now).forEach(group=>{
+    announce(ibBuildAnnouncement(group,allRunning),{interrupt,examIds:ids});
+  });
+}
+
 function addExam(){
-  // Save current titles before any re-render
   examDefs.forEach(def=>{
-    const el=document.getElementById('inp-title-'+def.id);
     if(el)def.title=el.value;
   });
   const eid=nextExamId++;
@@ -376,7 +477,7 @@ function removeExam(eid){
 }
 function toggleExtra(eid,key){const def=examDefs.find(e=>e.id===eid);if(!def)return;const on=Object.values(def.tog).filter(Boolean).length;if(def.tog[key]&&on<=1)return;def.tog[key]=!def.tog[key];const btn=document.getElementById(`et-${eid}-${key}`);if(btn){btn.classList.toggle('on',def.tog[key]);btn.querySelector('.sw-sm').classList.toggle('on',def.tog[key]);}checkStart();}
 function renderExamList(){
-  // Save current durations before re-render
+  // Save current durations and ibType before re-render
   examDefs.forEach(def=>{
     const h=document.getElementById('inp-h-'+def.id);
     const m=document.getElementById('inp-m-'+def.id);
@@ -384,6 +485,8 @@ function renderExamList(){
     if(h)def._h=h.value;
     if(m)def._m=m.value;
     if(s)def._s=s.value;
+    const it=document.getElementById('inp-ibtype-'+def.id);
+    if(it)def.ibType=it.value;
   });
   document.getElementById('exam-list').innerHTML=examDefs.map((def,i)=>`
     <div class="exam-card" id="ecard-${def.id}">
@@ -423,6 +526,16 @@ function renderExamList(){
         <span style="font-size:13px;color:#666;flex:1">Temps de lecture${def.readingOn!==false?' ✓':'  —'}</span>
         <div class="sw${def.readingOn!==false?' on':''}" id="sw-reading-${def.id}"></div>
       </div>
+      ${ibMode?`<div style="margin-top:8px">
+        <label style="font-size:12px;color:#1a4a8a;font-weight:500;display:block;margin-bottom:4px">Type d'épreuve IB</label>
+        <select id="inp-ibtype-${def.id}" style="width:100%;padding:6px 8px;border:1px solid #d0cdc6;border-radius:7px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none"
+          onchange="examDefs.find(e=>e.id===${def.id}).ibType=this.value">
+          <option value="ns" ${def.ibType==='ns'?'selected':''}>Non-structuré</option>
+          <option value="ss" ${def.ibType==='ss'?'selected':''}>Structuré / semi-structuré</option>
+          <option value="mcq" ${def.ibType==='mcq'?'selected':''}>QCM (multiple choice)</option>
+          <option value="acq" ${def.ibType==='acq'?'selected':''}>Acquisition de langues</option>
+        </select>
+      </div>`:''}
     </div>`).join('');
   checkStart();
 }
@@ -582,7 +695,7 @@ document.addEventListener('visibilitychange',()=>{
 });
 
 function announce(text,{interrupt=false,examIds=null,timerIds=null}={}){
-  if(silentMode||!window.speechSynthesis||!text)return;
+  if(audioMode!=='voice'||!window.speechSynthesis||!text)return;
   warmUpSpeech();
   const voice=selectedVoice||(()=>{
     const vv=window.speechSynthesis.getVoices();
@@ -690,6 +803,19 @@ function buildCombinedEndText(endBatch){
 }
 
 // Helper: join list
+function buildPrefix(examList,allRunningExams,fr,showExtraTime=false){
+  const allCovered=examList.length>=allRunningExams.length;
+  if(allCovered&&!showExtraTime)return'';
+  const parts=examList.map(e=>{
+    const extras=showExtraTime&&e.timers?e.timers.filter(ti=>!ti.done&&ti.label!=='Principal').map(ti=>ti.label):[];
+    if(allCovered)return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    if(extras.length)return fr?`${e.title}, temps supplémentaire de ${joinList(extras,fr)}`:`${e.title}, additional time of ${joinList(extras,fr)}`;
+    return e.title;
+  }).filter(Boolean);
+  if(!parts.length)return'';
+  return fr?`Pour ${joinList(parts,fr)} : `:`For ${joinList(parts,fr)}: `;
+}
+
 function joinList(arr, fr){
   if(arr.length===1) return arr[0];
   const conj = fr ? ' et ' : ' and ';
@@ -723,33 +849,39 @@ function buildExamStartText(examList){
 
 // ── ALERT SOUNDS ──
 function alertSound(text,examIds,timerIds){
-  if(silentMode)return;
+  if(audioMode==='silence')return;
   announce(text,{interrupt:true,examIds,timerIds});
   beep(880,.18); setTimeout(()=>beep(1100,.18),220);
 }
 function alert30Sound(text,examIds,timerIds){
-  if(silentMode||!alert30Enabled)return;
+  if(audioMode==='silence'||!alert30Enabled)return;
   announce(text,{interrupt:true,examIds,timerIds});
   beep(660,.14); setTimeout(()=>beep(780,.14),170);
 }
 function endSound(text,examIds,timerIds){
-  if(silentMode)return;
+  if(audioMode==='silence')return;
   announce(text,{interrupt:true,examIds,timerIds});
   beep(660,.2); setTimeout(()=>beep(880,.2),250); setTimeout(()=>beep(1100,.35),500);
 }
 function startReadingSound(examList){
-  if(silentMode)return;
-  announce(buildReadingStartText(examList),{examIds:examList.map(e=>e.id)});
+  if(audioMode==='silence')return;
+  const ids=examList.map(e=>e.id);
+  if(ibMode)ibAnnounce(examList,'readingStart',false,ids);
+  else announce(buildReadingStartText(examList),{examIds:ids});
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360);
 }
 function endReadingSound(examList){
-  if(silentMode)return;
-  announce(buildReadingEndText(examList),{examIds:examList.map(e=>e.id)});
+  if(audioMode==='silence')return;
+  const ids=examList.map(e=>e.id);
+  if(ibMode)ibAnnounce(examList,'readingEnd',false,ids);
+  else announce(buildReadingEndText(examList),{examIds:ids});
   beep(784,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(523,.2),360);
 }
 function startExamSound(examList){
-  if(silentMode)return;
-  announce(buildExamStartText(examList),{examIds:examList.map(e=>e.id)});
+  if(audioMode==='silence')return;
+  const ids=examList.map(e=>e.id);
+  if(ibMode)ibAnnounce(examList,'examStart',false,ids);
+  else announce(buildExamStartText(examList),{examIds:ids});
   beep(523,.15); setTimeout(()=>beep(659,.15),180); setTimeout(()=>beep(784,.15),360); setTimeout(()=>beep(1047,.3),540);
 }
 
@@ -801,7 +933,9 @@ function buildExamObj(def, readingOnOverride, readingMinsOverride){
     timers.push({id:`${def.id}-t50`,label:'+'+l2,total,left:total,done:false,
       alerted:false,alerted30:false,endAlerted:false,ratio:1+r2,r:RADII[ri++]});
   }
-  return{id:def.id,title,timers,status:'waiting',readingOn:rOn,readingTotal:rTotal,readingLeft:rTotal,readingAlerted:false};
+  const ibTypeSel=document.getElementById('inp-ibtype-'+def.id);
+  if(ibTypeSel)def.ibType=ibTypeSel.value;
+  return{id:def.id,title,timers,status:'waiting',readingOn:rOn,readingTotal:rTotal,readingLeft:rTotal,readingAlerted:false,ibType:def.ibType||'ns'};
 }
 
 // Format a ratio for display, preserving the original input format
@@ -1082,14 +1216,28 @@ function tick(){
   if(alert30Batch.length>0){
     const eIds=[...new Set(alert30Batch.map(x=>x.exam.id))];
     const tIds=alert30Batch.map(x=>x.timerId).filter(Boolean);
-    alert30Sound(buildAlertText(alert30Batch[0].minutes, alert30Batch), eIds, tIds);
+    if(ibMode){
+      const examList=[...new Set(alert30Batch.map(x=>x.exam))];
+      const now=new Date(),allR=exams.filter(e=>e.status==='running');
+      ibGroupAnnouncements(examList,'alert30',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds:tIds}));
+    } else {
+      alert30Sound(buildAlertText(alert30Batch[0].minutes, alert30Batch), eIds, tIds);
+    }
+    if(audioMode!=='silence'){beep(660,.14);setTimeout(()=>beep(780,.14),170);}
   }
   if(alertBatch.length>0){
     const delay=alert30Batch.length>0?3000:0;
     setTimeout(()=>{
       const eIds=[...new Set(alertBatch.map(x=>x.exam.id))];
       const tIds=alertBatch.map(x=>x.timerId).filter(Boolean);
-      alertSound(buildAlertText(alertBatch[0].minutes, alertBatch), eIds, tIds);
+      if(ibMode){
+        const examList=[...new Set(alertBatch.map(x=>x.exam))];
+        const now=new Date(),allR=exams.filter(e=>e.status==='running');
+        ibGroupAnnouncements(examList,'alert5',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds:tIds}));
+      } else {
+        alertSound(buildAlertText(alertBatch[0].minutes, alertBatch), eIds, tIds);
+      }
+      if(audioMode!=='silence'){beep(880,.18);setTimeout(()=>beep(1100,.18),220);}
     }, delay);
   }
   if(endBatch.length>0){
@@ -1097,7 +1245,14 @@ function tick(){
     setTimeout(()=>{
       const eIds=[...new Set(endBatch.map(x=>x.exam.id))];
       const tIds=endBatch.map(x=>x.timer.id);
-      endSound(buildCombinedEndText(endBatch), eIds, tIds);
+      if(ibMode){
+        const examList=[...new Set(endBatch.map(x=>x.exam))];
+        const now=new Date(),allR=exams.filter(e=>e.status==='running');
+        ibGroupAnnouncements(examList,'end',now).forEach(g=>announce(ibBuildAnnouncement(g,allR),{interrupt:true,examIds:eIds,timerIds:tIds}));
+      } else {
+        endSound(buildCombinedEndText(endBatch), eIds, tIds);
+      }
+      if(audioMode!=='silence'){beep(660,.2);setTimeout(()=>beep(880,.2),250);setTimeout(()=>beep(1100,.35),500);}
     }, delay);
   }
 
@@ -1468,7 +1623,7 @@ function confirmQuit(){
 function savePrefs(){
   try{
     localStorage.setItem('hl-prefs',JSON.stringify({
-      announceLang, silentMode, alert30Enabled,
+      announceLang, audioMode, alert30Enabled, ibMode,
       alertSecs, ALERT_30,
       readingOn,
       defaultP1:examDefs[0]?.p1||'25%',
@@ -1481,12 +1636,12 @@ function savePrefs(){
   try{
     const p=JSON.parse(localStorage.getItem('hl-prefs')||'{}');
     if(p.announceLang)announceLang=p.announceLang;
-    if(typeof p.silentMode==='boolean')silentMode=p.silentMode;
+    if(p.audioMode)audioMode=p.audioMode;
     if(typeof p.alert30Enabled==='boolean')alert30Enabled=p.alert30Enabled;
     if(p.alertSecs)alertSecs=p.alertSecs;
     if(p.ALERT_30)ALERT_30=p.ALERT_30;
     if(typeof p.readingOn==='boolean')readingOn=p.readingOn;
-    if(p.defaultP1)window._defaultP1=p.defaultP1;
+    if(typeof p.ibMode==='boolean')ibMode=p.ibMode;
     if(p.defaultP2)window._defaultP2=p.defaultP2;
   }catch(e){}
 })();
@@ -1502,7 +1657,8 @@ addExam();
   // Alert30 toggle
   const sw30=document.getElementById('sw-alert30');if(sw30)sw30.classList.toggle('on',alert30Enabled);
   // Silence toggle
-  if(silentMode){const sw=document.getElementById('sw-silence'),row=document.getElementById('silence-row');if(sw)sw.classList.add('on');if(row){row.style.borderColor='#3a7bd5';row.style.background='#eaf1fb';}}
+  setAudioMode(audioMode);
+  if(ibMode){const sw=document.getElementById('sw-ib');if(sw)sw.classList.add('on');}
   // Reading
   const togRow=document.getElementById('tog-reading'),swRead=document.getElementById('sw-reading'),inpRead=document.getElementById('inp-reading');
   if(togRow)togRow.classList.toggle('on',readingOn);if(swRead)swRead.classList.toggle('on',readingOn);if(inpRead)inpRead.disabled=!readingOn;
