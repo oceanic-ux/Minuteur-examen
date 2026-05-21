@@ -644,6 +644,14 @@ function _startAudioSession(){}
 function _stopAudioSession(){_speechQueue=[];_pendingQueue=[];}
 let _pendingQueue=[];
 
+function splitIntoChunks(text,maxLen=200){
+  const sentences=text.match(/[^.!?]+[.!?]+[\s]*/g)||[text];
+  const chunks=[];let current='';
+  sentences.forEach(s=>{if((current+s).length>maxLen&&current.length>0){chunks.push(current.trim());current=s;}else{current+=s;}});
+  if(current.trim())chunks.push(current.trim());
+  return chunks.length?chunks:[text];
+}
+
 function _speakNow(text,{interrupt=false,examIds=null,timerIds=null}={}){
   if(!window.speechSynthesis||!text)return;
   const voice=selectedVoice||(()=>{
@@ -660,8 +668,8 @@ function _speakNow(text,{interrupt=false,examIds=null,timerIds=null}={}){
   const chunks=splitIntoChunks(text);
   if(interrupt){
     _speechQueue=[];
-    try{window.speechSynthesis.cancel();}catch(e){}
-    _resetSpeech();hideSpeaking();
+    _resetSpeech();
+    hideSpeaking();
   }
   showSpeaking(examIds,timerIds);
   _speechQueue.push({chunks,langCode:announceLang,voice,examIds,timerIds});
@@ -704,20 +712,7 @@ function _speakChunksQueued(chunks,langCode,voice,idx){
   try{window.speechSynthesis.speak(u);}catch(e){_resetSpeech();hideSpeaking();}
 }
 
-let _warmingUp=false;
-function warmUpSpeech(){
-  if(!window.speechSynthesis||_warmingUp)return;
-  _warmingUp=true;
-  try{
-    window.speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance('\u200B');
-    u.volume=0;
-    u.onend=u.onerror=()=>{_warmingUp=false;};
-    window.speechSynthesis.speak(u);
-  }catch(e){_warmingUp=false;}
-}
-document.addEventListener('touchstart',warmUpSpeech,{passive:true});
-document.addEventListener('mousedown',warmUpSpeech,{passive:true});
+// No warm-up needed — iOS allows speech from setInterval directly
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'){
     _resetSpeech();
@@ -1008,12 +1003,7 @@ function startAll(){
 
 // ── LAUNCH A SINGLE EXAM ──
 function _unlockSpeechNow(){
-  if(audioMode==='voice'&&window.speechSynthesis){
-    try{
-      const u=new SpeechSynthesisUtterance('\u200B');
-      u.volume=0;window.speechSynthesis.speak(u);
-    }catch(e){}
-  }
+  // No-op: iOS doesn't need pre-unlocking for speechSynthesis
 }
 
 function launchExam(examId){
@@ -1678,6 +1668,8 @@ function savePrefs(){
     if(p.defaultP2)window._defaultP2=p.defaultP2;
   }catch(e){}
 })();
+
+
 
 addExam();
 
