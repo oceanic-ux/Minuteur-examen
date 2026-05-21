@@ -629,44 +629,20 @@ if(window.speechSynthesis){
   populateVoices();
 }
 
-// ── iOS SPEECH BRIDGE ──
-// iOS blocks speechSynthesis from setInterval callbacks.
-// Solution: queue announcements and speak them from ontimeupdate of a
-// looping audio element, which iOS treats as a trusted media event.
-let _pendingQueue=[]; // queue of {text, examIds, timerIds} for iOS audio tick
-let _audioTick=null;
+// ── SPEECH ENGINE ──
+// iOS Safari allows speechSynthesis from setInterval callbacks (confirmed via testing).
+// No audio session bridge needed — speak directly.
+let _speechQueue=[], _speechBusy=false, _speechWatchdog=null;
 
-function _startAudioSession(){
-  if(_audioTick)return;
-  try{
-    const silentWav='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    _audioTick=new Audio(silentWav);
-    _audioTick.loop=true;
-    _audioTick.volume=0;
-    _audioTick.ontimeupdate=_onAudioTick;
-    _audioTick.play().catch(()=>{});
-  }catch(e){}
+function _resetSpeech(){
+  _speechBusy=false;
+  if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}
 }
 
-function _stopAudioSession(){
-  if(_audioTick){
-    _audioTick.ontimeupdate=null;
-    try{_audioTick.pause();}catch(e){}
-    _audioTick=null;
-  }
-  _pendingQueue=[];
-}
-
-let _lastSpokenAt=0;
-function _onAudioTick(){
-  if(!_pendingQueue.length)return;
-  if(_speechBusy)return; // wait for current speech to finish
-  const now=Date.now();
-  if(now-_lastSpokenAt<200)return; // debounce
-  _lastSpokenAt=now;
-  const {text,examIds,timerIds}=_pendingQueue.shift();
-  _speakNow(text,{interrupt:false,examIds,timerIds});
-}
+// No-op stubs so existing call sites don't break
+function _startAudioSession(){}
+function _stopAudioSession(){_speechQueue=[];_pendingQueue=[];}
+let _pendingQueue=[];
 
 function _speakNow(text,{interrupt=false,examIds=null,timerIds=null}={}){
   if(!window.speechSynthesis||!text)return;
@@ -690,14 +666,6 @@ function _speakNow(text,{interrupt=false,examIds=null,timerIds=null}={}){
   showSpeaking(examIds,timerIds);
   _speechQueue.push({chunks,langCode:announceLang,voice,examIds,timerIds});
   setTimeout(_processQueue,50);
-}
-
-// ── SPEECH SYNTHESIS ──
-let _speechQueue=[], _speechBusy=false, _speechWatchdog=null;
-
-function _resetSpeech(){
-  _speechBusy=false;
-  if(_speechWatchdog){clearTimeout(_speechWatchdog);_speechWatchdog=null;}
 }
 
 // ── SPEAKING INDICATOR ──
@@ -760,19 +728,7 @@ document.addEventListener('visibilitychange',()=>{
 
 function announce(text,{interrupt=false,examIds=null,timerIds=null}={}){
   if(audioMode!=='voice'||!window.speechSynthesis||!text)return;
-  if(_audioTick){
-    // iOS: queue for next audio tick event
-    if(interrupt){
-      _pendingQueue=[];
-      _speechQueue=[];
-      try{window.speechSynthesis.cancel();}catch(e){}
-      _resetSpeech();hideSpeaking();
-    }
-    _pendingQueue.push({text,examIds,timerIds});
-  } else {
-    // Desktop: speak directly
-    _speakNow(text,{interrupt,examIds,timerIds});
-  }
+  _speakNow(text,{interrupt,examIds,timerIds});
 }
 
 // ── AUDIO (beep fallback for desktop) ──
@@ -1023,8 +979,8 @@ function startAll(){
   alertSecs=(parseInt(document.getElementById('inp-alert').value)||5)*60;
   ALERT_30=alert30Enabled?(parseInt(document.getElementById('inp-alert30').value)||30)*60:0;
   savePrefs();
-  // Start audio session to keep iOS speech alive
-  if(audioMode==='voice') _startAudioSession();
+  // Warm up speech from this user gesture
+  if(audioMode==='voice') _unlockSpeechNow();
   exams=[];
   examDefs.forEach(def=>{
     const obj=buildExamObj(def);if(obj)exams.push(obj);
@@ -1052,8 +1008,12 @@ function startAll(){
 
 // ── LAUNCH A SINGLE EXAM ──
 function _unlockSpeechNow(){
-  if(audioMode!=='voice')return;
-  _startAudioSession();
+  if(audioMode==='voice'&&window.speechSynthesis){
+    try{
+      const u=new SpeechSynthesisUtterance('\u200B');
+      u.volume=0;window.speechSynthesis.speak(u);
+    }catch(e){}
+  }
 }
 
 function launchExam(examId){
@@ -1342,11 +1302,9 @@ function togglePause(){
   syncPauseButtons();
   if(paused){
     releaseWakeLock();
-    if(_audioTick)_audioTick.pause();
     if(window.speechSynthesis)window.speechSynthesis.pause();
   } else {
     acquireWakeLock();
-    if(_audioTick)_audioTick.play().catch(()=>{});
     if(window.speechSynthesis)window.speechSynthesis.resume();
   }
 }
