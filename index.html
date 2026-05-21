@@ -629,23 +629,67 @@ if(window.speechSynthesis){
   populateVoices();
 }
 
-// ── iOS AUDIO SESSION KEEPALIVE ──
-// iOS suspends audio/speech when no audio is playing. A silent looping audio
-// element keeps the session alive so speechSynthesis works from timer callbacks.
-let _audioSession=null;
+// ── iOS SPEECH BRIDGE ──
+// iOS blocks speechSynthesis from setInterval callbacks.
+// Solution: queue announcements and speak them from ontimeupdate of a
+// looping audio element, which iOS treats as a trusted media event.
+let _pendingQueue=[]; // queue of {text, examIds, timerIds} for iOS audio tick
+let _audioTick=null;
+
 function _startAudioSession(){
-  if(_audioSession)return;
+  if(_audioTick)return;
   try{
-    // Create a 0.1s silent WAV as a data URI
     const silentWav='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    _audioSession=new Audio(silentWav);
-    _audioSession.loop=true;
-    _audioSession.volume=0;
-    _audioSession.play().catch(()=>{});
+    _audioTick=new Audio(silentWav);
+    _audioTick.loop=true;
+    _audioTick.volume=0;
+    _audioTick.ontimeupdate=_onAudioTick;
+    _audioTick.play().catch(()=>{});
   }catch(e){}
 }
+
 function _stopAudioSession(){
-  if(_audioSession){try{_audioSession.pause();}catch(e){}_audioSession=null;}
+  if(_audioTick){
+    _audioTick.ontimeupdate=null;
+    try{_audioTick.pause();}catch(e){}
+    _audioTick=null;
+  }
+  _pendingQueue=[];
+}
+
+let _lastSpokenAt=0;
+function _onAudioTick(){
+  if(!_pendingQueue.length)return;
+  if(_speechBusy)return; // wait for current speech to finish
+  const now=Date.now();
+  if(now-_lastSpokenAt<200)return; // debounce
+  _lastSpokenAt=now;
+  const {text,examIds,timerIds}=_pendingQueue.shift();
+  _speakNow(text,{interrupt:false,examIds,timerIds});
+}
+
+function _speakNow(text,{interrupt=false,examIds=null,timerIds=null}={}){
+  if(!window.speechSynthesis||!text)return;
+  const voice=selectedVoice||(()=>{
+    const vv=window.speechSynthesis.getVoices();
+    if(announceLang==='en'){
+      return vv.find(v=>v.lang.toLowerCase().startsWith('en-gb')&&v.localService)
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-gb'))
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-us')&&v.localService)
+          ||vv.find(v=>v.lang.toLowerCase().startsWith('en'))||null;
+    }
+    return vv.find(v=>v.lang.toLowerCase().startsWith('fr')&&v.localService)
+        ||vv.find(v=>v.lang.toLowerCase().startsWith('fr'))||null;
+  })();
+  const chunks=splitIntoChunks(text);
+  if(interrupt){
+    _speechQueue=[];
+    try{window.speechSynthesis.cancel();}catch(e){}
+    _resetSpeech();hideSpeaking();
+  }
+  showSpeaking(examIds,timerIds);
+  _speechQueue.push({chunks,langCode:announceLang,voice,examIds,timerIds});
+  setTimeout(_processQueue,50);
 }
 
 // ── SPEECH SYNTHESIS ──
@@ -716,26 +760,19 @@ document.addEventListener('visibilitychange',()=>{
 
 function announce(text,{interrupt=false,examIds=null,timerIds=null}={}){
   if(audioMode!=='voice'||!window.speechSynthesis||!text)return;
-  warmUpSpeech();
-  const voice=selectedVoice||(()=>{
-    const vv=window.speechSynthesis.getVoices();
-    if(announceLang==='en'){
-      return vv.find(v=>v.lang.toLowerCase().startsWith('en-gb')&&v.localService)
-          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-gb'))
-          ||vv.find(v=>v.lang.toLowerCase().startsWith('en-us')&&v.localService)
-          ||vv.find(v=>v.lang.toLowerCase().startsWith('en'))||null;
+  if(_audioTick){
+    // iOS: queue for next audio tick event
+    if(interrupt){
+      _pendingQueue=[];
+      _speechQueue=[];
+      try{window.speechSynthesis.cancel();}catch(e){}
+      _resetSpeech();hideSpeaking();
     }
-    return vv.find(v=>v.lang.toLowerCase().startsWith('fr')&&v.localService)
-        ||vv.find(v=>v.lang.toLowerCase().startsWith('fr'))||null;
-  })();
-  const chunks=splitIntoChunks(text);
-  if(interrupt){
-    _speechQueue=[];
-    try{window.speechSynthesis.cancel();}catch(e){}
-    _resetSpeech();hideSpeaking();
+    _pendingQueue.push({text,examIds,timerIds});
+  } else {
+    // Desktop: speak directly
+    _speakNow(text,{interrupt,examIds,timerIds});
   }
-  _speechQueue.push({chunks,langCode:announceLang,voice,examIds,timerIds});
-  setTimeout(_processQueue,interrupt?100:0);
 }
 
 // ── AUDIO (beep fallback for desktop) ──
@@ -986,17 +1023,8 @@ function startAll(){
   alertSecs=(parseInt(document.getElementById('inp-alert').value)||5)*60;
   ALERT_30=alert30Enabled?(parseInt(document.getElementById('inp-alert30').value)||30)*60:0;
   savePrefs();
-  // Unlock speech synthesis from this user gesture (iOS requires this)
-  if(audioMode==='voice'&&window.speechSynthesis){
-    _startAudioSession(); // keep iOS audio session alive
-    try{
-      window.speechSynthesis.cancel();
-      const u=new SpeechSynthesisUtterance('\u200B');
-      u.volume=0; u.rate=1;
-      u.onend=()=>{_warmingUp=false;};
-      window.speechSynthesis.speak(u);
-    }catch(e){}
-  }
+  // Start audio session to keep iOS speech alive
+  if(audioMode==='voice') _startAudioSession();
   exams=[];
   examDefs.forEach(def=>{
     const obj=buildExamObj(def);if(obj)exams.push(obj);
@@ -1024,13 +1052,8 @@ function startAll(){
 
 // ── LAUNCH A SINGLE EXAM ──
 function _unlockSpeechNow(){
-  if(audioMode!=='voice'||!window.speechSynthesis)return;
+  if(audioMode!=='voice')return;
   _startAudioSession();
-  try{
-    const u=new SpeechSynthesisUtterance('\u200B');
-    u.volume=0;u.rate=1;
-    window.speechSynthesis.speak(u);
-  }catch(e){}
 }
 
 function launchExam(examId){
@@ -1319,11 +1342,11 @@ function togglePause(){
   syncPauseButtons();
   if(paused){
     releaseWakeLock();
-    if(_audioSession)_audioSession.pause();
+    if(_audioTick)_audioTick.pause();
     if(window.speechSynthesis)window.speechSynthesis.pause();
   } else {
     acquireWakeLock();
-    if(_audioSession)_audioSession.play().catch(()=>{});
+    if(_audioTick)_audioTick.play().catch(()=>{});
     if(window.speechSynthesis)window.speechSynthesis.resume();
   }
 }
