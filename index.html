@@ -209,18 +209,14 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
   <!-- SETUP -->
   <div id="setup-panel">
     <h1>Minuteurs multi-examens</h1>
-    <div class="section-title">Temps de lecture (commun au démarrage)</div>
-    <div class="reading-row on" id="tog-reading" onclick="toggleReading(event)">
-      <div class="reading-left">
-        <span class="reading-name">Temps de lecture</span>
-        <span class="reading-sub" id="reading-sub">5 minutes avant le début</span>
-      </div>
-      <div class="reading-controls" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border:1px solid #e8e0c8;border-radius:10px;background:#fffbe6;margin-bottom:1rem">
+      <span class="reading-name" id="ui-reading-name" style="color:#7a6000;font-size:13px;font-weight:600;flex-shrink:0">Temps de lecture</span>
+      <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
         <input type="number" class="reading-input" id="inp-reading" min="1" max="60" value="5" oninput="updateReadingSub()">
-        <span class="reading-input-label">min</span>
-        <div class="sw on" id="sw-reading" onclick="toggleReading(event)"></div>
+        <span class="reading-input-label" style="font-size:13px;color:#888">min</span>
       </div>
     </div>
+    <div style="font-size:11px;color:#aaa;margin-top:-10px;margin-bottom:1rem;padding-left:2px" id="reading-sub">Activez par épreuve ci-dessous</div>
     <div class="section-title">Examens</div>
     <div class="exam-list" id="exam-list"></div>
     <button class="add-exam-btn" onclick="addExam()">
@@ -231,14 +227,15 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:1.1rem">
       <div style="display:flex;align-items:center;gap:10px">
         <label style="font-size:13px;color:#666;white-space:nowrap;flex:1">Première alerte avant la fin</label>
-        <input type="number" id="inp-alert30" min="1" max="180" value="30" style="width:64px;flex-shrink:0">
+        <input type="number" id="inp-alert30" min="1" max="180" value="30" style="width:64px;flex-shrink:0" oninput="ALERT_30=alert30Enabled?(parseInt(this.value)||30)*60:0;savePrefs()">
         <span style="font-size:13px;color:#888;flex-shrink:0">min</span>
         <div class="sw on" id="sw-alert30" onclick="toggleAlert30()" style="flex-shrink:0"></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         <label style="font-size:13px;color:#666;white-space:nowrap;flex:1">Deuxième alerte avant la fin</label>
-        <input type="number" id="inp-alert" min="0" max="120" value="5" style="width:64px;flex-shrink:0">
+        <input type="number" id="inp-alert" min="0" max="120" value="5" style="width:64px;flex-shrink:0" oninput="alertSecs=alert5Enabled?(parseInt(this.value)||5)*60:0;savePrefs()">
         <span style="font-size:13px;color:#888;flex-shrink:0">min</span>
+        <div class="sw on" id="sw-alert5" onclick="toggleAlert5()" style="flex-shrink:0"></div>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         <label style="font-size:13px;color:#666;flex:1">Mode audio</label>
@@ -321,13 +318,14 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
   <div class="panel-tabs">
     <button class="panel-tab active" id="tab-adjust" onclick="switchTab('adjust')">Ajuster les temps</button>
     <button class="panel-tab" id="tab-add" onclick="switchTab('add')">Ajouter un examen</button>
+    <button class="panel-tab" id="tab-voice" onclick="switchTab('voice')">Voix &amp; alertes</button>
   </div>
   <div class="panel-body" id="panel-body"></div>
 </div>
 
 <script>
 // ══ STATE ══
-let readingOn=true, audioMode='beep', alert30Enabled=true, ibMode=false;
+let readingOn=true, audioMode='beep', alert30Enabled=true, alert5Enabled=true, ibMode=false;
 let alertSecs=300;
 let ALERT_30=1800; // configurable, default 30 min
 let paused=false, intervalId=null, clockInterval=null;
@@ -374,12 +372,18 @@ function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(
 function milestonesHTML(t){
   if(t.done)return'';
   const l=t.left;let h='';
-  const at30=l-1800;
-  if(at30>0)h+=`<div class="ms-item ms-30"><span class="ms-dot"></span>−30 min → <strong>${fmtClockAt(at30)}</strong></div>`;
-  else h+=`<div class="ms-item ms-30 ms-passed"><span class="ms-dot"></span>−30 min passé</div>`;
-  const at5=l-300;
-  if(at5>0)h+=`<div class="ms-item ms-5"><span class="ms-dot"></span>−5 min → <strong>${fmtClockAt(at5)}</strong></div>`;
-  else if(l>0)h+=`<div class="ms-item ms-5 ms-passed"><span class="ms-dot"></span>−5 min passé</div>`;
+  if(alert30Enabled&&ALERT_30>0){
+    const at30=l-ALERT_30;
+    const lbl='−'+Math.round(ALERT_30/60)+' min';
+    if(at30>0)h+=`<div class="ms-item ms-30"><span class="ms-dot"></span>${lbl} → <strong>${fmtClockAt(at30)}</strong></div>`;
+    else h+=`<div class="ms-item ms-30 ms-passed"><span class="ms-dot"></span>${lbl} passé</div>`;
+  }
+  if(alert5Enabled&&alertSecs>0){
+    const at5=l-alertSecs;
+    const lbl='−'+Math.round(alertSecs/60)+' min';
+    if(at5>0)h+=`<div class="ms-item ms-5"><span class="ms-dot"></span>${lbl} → <strong>${fmtClockAt(at5)}</strong></div>`;
+    else if(l>0)h+=`<div class="ms-item ms-5 ms-passed"><span class="ms-dot"></span>${lbl} passé</div>`;
+  }
   if(l>0)h+=`<div class="ms-item ms-end"><span class="ms-dot"></span>Fin → <strong>${fmtClockAt(l)}</strong></div>`;
   return`<div class="milestones" id="ms-${t.id}">${h}</div>`;
 }
@@ -390,8 +394,12 @@ function refreshMilestones(t){
 }
 
 // ── SETUP UI ──
-function updateReadingSub(){const v=parseInt(document.getElementById('inp-reading').value)||5;document.getElementById('reading-sub').textContent=v+' minute'+(v>1?'s':'')+' avant le début';}
-function toggleReading(e){if(e)e.stopPropagation();readingOn=!readingOn;const row=document.getElementById('tog-reading'),sw=document.getElementById('sw-reading'),inp=document.getElementById('inp-reading');row.classList.toggle('on',readingOn);sw.classList.toggle('on',readingOn);inp.disabled=!readingOn;}
+function updateReadingSub(){
+  const v=parseInt(document.getElementById('inp-reading')?.value)||5;
+  const el=document.getElementById('reading-sub');
+  if(el)el.textContent=v+' minute'+(v>1?'s':'')+' avant le début';
+}
+function toggleReading(e){if(e)e.stopPropagation();/* per-exam toggle — global toggle removed */}
 function setAudioMode(mode){
   audioMode=mode;
   ['silence','beep','voice'].forEach(m=>{
@@ -405,6 +413,7 @@ function setAudioMode(mode){
   const vo=document.getElementById('voice-options');
   if(vo)vo.style.display=mode==='voice'?'flex':'none';
   if(mode==='voice')populateVoices();
+  if(typeof currentTab!=='undefined'&&currentTab==='voice')buildVoiceAlertsPanel();
   savePrefs();
 }
 let _voiceSettingsOpen=false;
@@ -792,6 +801,7 @@ function setLang(l){
   });
   selectedVoice=null;populateVoices();
   if(_voiceSettingsOpen)buildVoiceSettingsPanel();
+  if(typeof currentTab!=='undefined'&&currentTab==='voice')buildVoiceAlertsPanel();
   savePrefs();
 }
 function populateVoices(){
@@ -1684,9 +1694,101 @@ function switchTab(tab){
   currentTab=tab;
   document.getElementById('tab-adjust').classList.toggle('active',tab==='adjust');
   document.getElementById('tab-add').classList.toggle('active',tab==='add');
+  document.getElementById('tab-voice').classList.toggle('active',tab==='voice');
   buildPanelTab(tab);
 }
-function buildPanelTab(tab){if(tab==='adjust')buildAdjustPanel();else buildAddPanel();}
+function buildPanelTab(tab){
+  if(tab==='adjust')buildAdjustPanel();
+  else if(tab==='add')buildAddPanel();
+  else if(tab==='voice')buildVoiceAlertsPanel();
+}
+
+function buildVoiceAlertsPanel(){
+  const body=document.getElementById('panel-body');
+  if(!body)return;
+  let h='<div style="display:flex;flex-direction:column;gap:14px">';
+
+  // Audio mode
+  h+='<div><div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Mode audio</div>';
+  h+='<div style="display:flex;gap:6px">';
+  [['silence','🔇 Silence'],['beep','🔔 Son'],['voice','🗣 Voix']].forEach(function(pair){
+    const m=pair[0],label=pair[1],active=audioMode===m;
+    h+='<button onclick="setAudioMode(\''+m+'\')" id="panel-amode-'+m+'" '
+      +'style="flex:1;padding:7px 4px;border-radius:8px;border:1px solid '+(active?'#3a7bd5':'#d0cdc6')+';'
+      +'background:'+(active?'#3a7bd5':'#fff')+';color:'+(active?'#fff':'#666')+';'
+      +'cursor:pointer;font-size:13px;font-family:inherit;font-weight:'+(active?'500':'400')+'">'+label+'</button>';
+  });
+  h+='</div></div>';
+
+  // Announce language + voice (only in voice mode)
+  if(audioMode==='voice'){
+    h+='<div><div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Langue des annonces</div>';
+    h+='<div style="display:flex;gap:6px;margin-bottom:8px">';
+    ['fr','en'].forEach(function(l){
+      const active=announceLang===l;
+      h+='<button onclick="setLang(\''+l+'\')" '
+        +'style="flex:1;padding:7px;border-radius:8px;border:1px solid '+(active?'#3a7bd5':'#d0cdc6')+';'
+        +'background:'+(active?'#3a7bd5':'#fff')+';color:'+(active?'#fff':'#666')+';'
+        +'cursor:pointer;font-size:13px;font-family:inherit;font-weight:'+(active?'500':'400')+'">'+l.toUpperCase()+'</button>';
+    });
+    h+='</div>';
+    h+='<div style="display:flex;align-items:center;gap:8px">';
+    h+='<label style="font-size:13px;color:#666;flex:1">Voix</label>';
+    h+='<select id="panel-voice-select" onchange="panelVoiceChange(this)" style="flex:1;max-width:160px;padding:5px 8px;border:1px solid #d0cdc6;border-radius:8px;font-size:12px;font-family:inherit;color:#1a1a18;background:#fff;outline:none">';
+    h+='<option value="">Voix par défaut</option>';
+    if(window.speechSynthesis){
+      const voices=window.speechSynthesis.getVoices();
+      const lp=announceLang==='fr'?'fr':'en';
+      voices.filter(function(v){return v.lang.toLowerCase().startsWith(lp);}).forEach(function(v){
+        const sel=selectedVoice&&selectedVoice.name===v.name?' selected':'';
+        h+='<option value="'+escHtml(v.name)+'"'+sel+'>'+escHtml(v.name)+' ('+v.lang+')</option>';
+      });
+    }
+    h+='</select></div></div>';
+  }
+
+  // Alerts
+  const a30mins=Math.round((ALERT_30||1800)/60);
+  const a5mins=Math.round((alertSecs||300)/60);
+  h+='<div><div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Alertes</div>';
+  h+='<div style="display:flex;flex-direction:column;gap:8px">';
+  h+='<div style="display:flex;align-items:center;gap:8px">';
+  h+='<label style="font-size:13px;color:#666;flex:1">Première alerte</label>';
+  h+='<input type="number" id="panel-inp-alert30" min="1" max="180" value="'+a30mins+'" '
+    +'style="width:56px;padding:5px;border:1px solid #d0cdc6;border-radius:7px;font-size:13px;text-align:center;font-family:inherit" '
+    +'oninput="ALERT_30=alert30Enabled?(parseInt(this.value)||30)*60:0;savePrefs()">';
+  h+='<span style="font-size:13px;color:#888">min</span>';
+  h+='<div class="sw'+(alert30Enabled?' on':'')+'" id="panel-sw-alert30" onclick="panelToggleAlert30()"></div>';
+  h+='</div>';
+  h+='<div style="display:flex;align-items:center;gap:8px">';
+  h+='<label style="font-size:13px;color:#666;flex:1">Deuxième alerte</label>';
+  h+='<input type="number" id="panel-inp-alert" min="0" max="120" value="'+a5mins+'" '
+    +'style="width:56px;padding:5px;border:1px solid #d0cdc6;border-radius:7px;font-size:13px;text-align:center;font-family:inherit" '
+    +'oninput="alertSecs=alert5Enabled?(parseInt(this.value)||5)*60:0;savePrefs()">';
+  h+='<span style="font-size:13px;color:#888">min</span>';
+  h+='<div class="sw'+(alert5Enabled?' on':'')+'" id="panel-sw-alert5" onclick="panelToggleAlert5()"></div>';
+  h+='</div></div></div>';
+
+  h+='</div>';
+  body.innerHTML=h;
+}
+
+function panelVoiceChange(sel){
+  const name=sel.value;
+  if(window.speechSynthesis)selectedVoice=name?window.speechSynthesis.getVoices().find(function(v){return v.name===name;})||null:null;
+}
+function panelToggleAlert30(){
+  toggleAlert30();
+  const sw=document.getElementById('panel-sw-alert30');
+  if(sw)sw.classList.toggle('on',alert30Enabled);
+}
+function panelToggleAlert5(){
+  toggleAlert5();
+  const sw=document.getElementById('panel-sw-alert5');
+  if(sw)sw.classList.toggle('on',alert5Enabled);
+}
+
+
 
 // ── ADJUST TAB ──
 function buildAdjustPanel(){
@@ -2071,6 +2173,7 @@ loadTemplates();
   const ia30=document.getElementById('inp-alert30');if(ia30)ia30.value=Math.round(ALERT_30/60);
   // Alert30 toggle
   const sw30=document.getElementById('sw-alert30');if(sw30)sw30.classList.toggle('on',alert30Enabled);
+  const sw5=document.getElementById('sw-alert5');if(sw5)sw5.classList.toggle('on',alert5Enabled);
   // Silence toggle
   setAudioMode(audioMode);
   if(ibMode){const sw=document.getElementById('sw-ib');if(sw)sw.classList.add('on');}
