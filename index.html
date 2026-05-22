@@ -363,7 +363,8 @@ let paused=false, intervalId=null, clockInterval=null;
 let wakeLock=null;
 const examPausedSet=new Set(); // set of exam IDs individually paused
 let examDefs=[], exams=[];
-const RADII=[52,43,36];
+const BASE_RADII=[52,43,36];
+let _colScale=1; // current column scale factor
 let nextExamId=1;
 let panelOpen=false, currentTab='adjust';
 let newExamTog={main:true,t25:true,t50:true};
@@ -546,7 +547,35 @@ function tickClock(){const el=document.getElementById('live-clock');if(el&&el.st
 function pad(n){return String(n).padStart(2,'0');}
 function fmtTime(s){if(s<0)s=0;const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;return h>0?h+':'+pad(m)+':'+pad(sc):pad(m)+':'+pad(sc);}
 function fmtHuman(s){if(s<=0)return'0 min';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sc=s%60;if(h>0&&m>0)return h+'h'+pad(m);if(h>0)return h+'h';if(m>0&&sc>0)return m+' min '+sc+' s';if(m>0)return m+' min';return sc+' s';}
-// Spoken duration for announcements
+// Spoken form of a timer label like "+25%" or "+1/3" for TTS
+function fmtSpokenLabel(label, fr){
+  if(!label)return label;
+  const s=label.replace(/^\+/,'').trim();
+  // Fraction like "1/3", "1/4", "2/3"
+  const fracMatch=s.match(/^(\d+)\/(\d+)$/);
+  if(fracMatch){
+    const n=parseInt(fracMatch[1]), d=parseInt(fracMatch[2]);
+    if(fr){
+      const dFr={2:'demi',3:'tiers',4:'quart',5:'cinquième',6:'sixième',8:'huitième',10:'dixième'};
+      const denom=dFr[d]||(d+'ième');
+      const plural=n>1&&d>2?'s':'';
+      return n===1?denom:n+' '+denom+plural;
+    } else {
+      const dEn={2:'half',3:'third',4:'quarter',5:'fifth',6:'sixth',8:'eighth',10:'tenth'};
+      const denom=dEn[d]||(d+'th');
+      const plural=n>1&&d>2?'s':'';
+      return n===1?denom:n+' '+denom+plural;
+    }
+  }
+  // Percentage like "25%" or "33.3%"
+  const pctMatch=s.match(/^([\d.]+)%$/);
+  if(pctMatch){
+    const v=parseFloat(pctMatch[1]);
+    const vStr=Number.isInteger(v)?String(v):(fr?String(v).replace('.',','):String(v));
+    return fr?vStr+' pour cent':vStr+' percent';
+  }
+  return label; // fallback
+}
 function fmtSpoken(s,fr=true){
   if(s<=0)return fr?'zéro minute':'zero minutes';
   const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
@@ -903,8 +932,8 @@ function ibBuildAnnouncement(group, allRunningExams){
   const parts=group.exams.map(e=>{
     if(group.timerLabel&&group.timerLabel!=='Principal'){
       return fr
-        ?`${e.title||('Épreuve '+e.id)}, temps supplémentaire de ${group.timerLabel}`
-        :`${e.title||('Exam '+e.id)}, additional time of ${group.timerLabel}`;
+        ?`${e.title||('Épreuve '+e.id)}, temps supplémentaire de ${fmtSpokenLabel(group.timerLabel,true)}`
+        :`${e.title||('Exam '+e.id)}, additional time of ${fmtSpokenLabel(group.timerLabel,false)}`;
     }
     return e.title||('Épreuve '+e.id);
   });
@@ -1010,6 +1039,7 @@ function makeLogo(size){
   return '<img src="'+src+'" width="'+size+'" height="'+size+'" alt="Haut-Lac" style="display:block;object-fit:contain;pointer-events:none">';
 }
 function makeSVG(r,tid,strokeColor){
+  r=Math.round(r*_colScale);
   const c=r+9,sz=(r+9)*2,circ=(2*Math.PI*r).toFixed(2),sc=strokeColor||'#1a1a18';
   const ld=Math.max(16,Math.round((r-7)*2*0.82));
   return`<div style="position:relative;width:${sz}px;height:${sz}px;flex-shrink:0">
@@ -1038,15 +1068,20 @@ let announceLang='fr';
 let selectedVoice=null;
 function setLang(l){
   announceLang=l;
-  savePrefs();['fr','en'].forEach(code=>{
-    const btn=document.getElementById('lang-'+code);if(!btn)return;
-    btn.style.background=l===code?'#3a7bd5':'#fff';
-    btn.style.color=l===code?'#fff':'#666';
-    btn.style.borderColor=l===code?'#3a7bd5':'#d0cdc6';
-    btn.style.fontWeight=l===code?'500':'400';
+  // Update all lang buttons (setup panel + side panel)
+  ['fr','en'].forEach(code=>{
+    ['lang-'+code, 'panel-lang-'+code].forEach(id=>{
+      const btn=document.getElementById(id);if(!btn)return;
+      const active=l===code;
+      btn.style.background=active?'#3a7bd5':'#fff';
+      btn.style.color=active?'#fff':'#666';
+      btn.style.borderColor=active?'#3a7bd5':'#d0cdc6';
+      btn.style.fontWeight=active?'500':'400';
+    });
   });
   selectedVoice=null;populateVoices();
   if(_voiceSettingsOpen)buildVoiceSettingsPanel();
+  if(currentTab==='voice')buildVoiceAlertsPanel();
   savePrefs();
 }
 function populateVoices(){
@@ -1229,9 +1264,9 @@ function buildAlertText(minutes, timerContexts){
   const parts=Object.entries(examGroups).map(([title,extras])=>{
     if(allExamsCovered){
       // No exam names — only mention extra time if applicable
-      return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+      return extras.length?(fr?`temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`):null;
     }
-    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`${title}, additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`;
     return title;
   }).filter(Boolean);
 
@@ -1262,9 +1297,9 @@ function buildCombinedEndText(endBatch){
 
   const parts=Object.entries(groups).map(([title,extras])=>{
     if(allExamsCovered){
-      return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+      return extras.length?(fr?`temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`):null;
     }
-    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`${title}, additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`;
     return title;
   }).filter(Boolean);
 
@@ -1426,8 +1461,8 @@ function buildAlertTemplateText(event,minutes,timerContexts){
   timerContexts.forEach(({examTitle,timerLabel,isExtra})=>{if(!examGroups[examTitle])examGroups[examTitle]=[];if(isExtra)examGroups[examTitle].push(timerLabel);});
   const allExamsCovered=Object.keys(examGroups).length>=runningExams.length;
   const parts=Object.entries(examGroups).map(([title,extras])=>{
-    if(allExamsCovered)return extras.length?(fr?`le temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
-    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    if(allExamsCovered)return extras.length?(fr?`le temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`):null;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`${title}, additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`;
     return title;
   }).filter(Boolean);
   if(parts.length===0)return baseFromTemplate;
@@ -1445,8 +1480,8 @@ function buildEndTemplateText(endBatch){
   endBatch.forEach(({exam,timer})=>{if(!groups[exam.title])groups[exam.title]=[];if(timer.label!=='Principal')groups[exam.title].push(timer.label);});
   const allExamsCovered=Object.keys(groups).length>=runningExams.length;
   const parts=Object.entries(groups).map(([title,extras])=>{
-    if(allExamsCovered)return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
-    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    if(allExamsCovered)return extras.length?(fr?`temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`):null;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`:`${title}, additional time of ${joinList(extras.map(function(x){return fmtSpokenLabel(x,fr);}),fr)}`;
     return title;
   }).filter(Boolean);
   if(parts.length===0)return base;
@@ -1561,17 +1596,17 @@ function buildExamObj(def, readingOnOverride, readingMinsOverride){
   if(def.tog.main){
     const total=base;
     timers.push({id:`${def.id}-main`,label:'Principal',total,left:total,done:false,
-      alerted:false,alerted30:false,endAlerted:false,ratio:1,r:RADII[ri++]});
+      alerted:false,alerted30:false,endAlerted:false,ratio:1,r:BASE_RADII[Math.min(ri++,2)]});
   }
   if(def.tog.t25){
     const total=Math.round(base*(1+r1));
     timers.push({id:`${def.id}-t25`,label:'+'+l1,total,left:total,done:false,
-      alerted:false,alerted30:false,endAlerted:false,ratio:1+r1,r:RADII[ri++]});
+      alerted:false,alerted30:false,endAlerted:false,ratio:1+r1,r:BASE_RADII[Math.min(ri++,2)]});
   }
   if(def.tog.t50){
     const total=Math.round(base*(1+r2));
     timers.push({id:`${def.id}-t50`,label:'+'+l2,total,left:total,done:false,
-      alerted:false,alerted30:false,endAlerted:false,ratio:1+r2,r:RADII[ri++]});
+      alerted:false,alerted30:false,endAlerted:false,ratio:1+r2,r:BASE_RADII[Math.min(ri++,2)]});
   }
   // Read ibType from DOM (may have changed since addExam)
   const ibTypeSel=document.getElementById('inp-ibtype-'+def.id);
@@ -2024,7 +2059,7 @@ function buildVoiceAlertsPanel(){
     h+='<div style="display:flex;gap:6px">';
     ['fr','en'].forEach(function(l){
       const active=announceLang===l;
-      h+='<button onclick="setLang(\''+l+'\')" '
+      h+='<button id="panel-lang-'+l+'" onclick="setLang(\''+l+'\')" '
         +'style="flex:1;padding:7px;border-radius:8px;border:1px solid '+(active?'#3a7bd5':'#d0cdc6')+';'
         +'background:'+(active?'#3a7bd5':'#fff')+';color:'+(active?'#fff':'#666')+';'
         +'cursor:pointer;font-size:13px;font-family:inherit;font-weight:'+(active?'500':'400')+'">'+l.toUpperCase()+'</button>';
@@ -2304,9 +2339,9 @@ function confirmNewExam(){
   const l1=fmtPercent(r1, p1str);
   const l2=fmtPercent(r2, p2str);
   const timers=[];let ri=0;
-  if(newExamTog.main){timers.push({id:`${eid}-main`,label:'Principal',total:base,left:base,done:false,alerted:false,alerted30:false,endAlerted:false,ratio:1,r:RADII[ri++]});}
-  if(newExamTog.t25){const total=Math.round(base*(1+r1));timers.push({id:`${eid}-t25`,label:'+'+l1,total,left:total,done:false,alerted:false,alerted30:false,endAlerted:false,ratio:1+r1,r:RADII[ri++]});}
-  if(newExamTog.t50){const total=Math.round(base*(1+r2));timers.push({id:`${eid}-t50`,label:'+'+l2,total,left:total,done:false,alerted:false,alerted30:false,endAlerted:false,ratio:1+r2,r:RADII[ri++]});}
+  if(newExamTog.main){timers.push({id:`${eid}-main`,label:'Principal',total:base,left:base,done:false,alerted:false,alerted30:false,endAlerted:false,ratio:1,r:BASE_RADII[Math.min(ri++,2)]});}
+  if(newExamTog.t25){const total=Math.round(base*(1+r1));timers.push({id:`${eid}-t25`,label:'+'+l1,total,left:total,done:false,alerted:false,alerted30:false,endAlerted:false,ratio:1+r1,r:BASE_RADII[Math.min(ri++,2)]});}
+  if(newExamTog.t50){const total=Math.round(base*(1+r2));timers.push({id:`${eid}-t50`,label:'+'+l2,total,left:total,done:false,alerted:false,alerted30:false,endAlerted:false,ratio:1+r2,r:BASE_RADII[Math.min(ri++,2)]});}
   const exam={id:eid,title,timers,status:'waiting',readingOn:rOn,readingTotal:rTotal,readingLeft:rTotal,readingAlerted:false};
   exams.push(exam);
   // Append column to DOM
@@ -2321,57 +2356,76 @@ function confirmNewExam(){
 }
 
 // ── SCALE COLUMNS TO FIT ──
-function scaleColumns(){
-  if(document.fullscreenElement)return;
+function sizeColumns(){
   const container=document.getElementById('exams-columns');
   if(!container)return;
   const cols=container.querySelectorAll('.exam-col');
-  if(!cols.length)return;
-  container.querySelectorAll('.t-display').forEach(el=>el.style.fontSize='');
-  container.querySelectorAll('.exam-col-title').forEach(el=>el.style.fontSize='');
-  container.querySelectorAll('.ms-item').forEach(el=>el.style.fontSize='');
-  container.querySelectorAll('.col-reading-disp').forEach(el=>el.style.fontSize='');
   const n=cols.length;
-  if(n<=2)return;
-  const colW=Math.floor(container.offsetWidth/n);
-  const scale=Math.min(1,colW/280);
-  if(scale>=0.98)return;
-  const tDisp=Math.max(22,Math.round(40*scale))+'px';
-  const title=Math.max(13,Math.round(20*scale))+'px';
-  const ms=Math.max(8,Math.round(10*scale))+'px';
-  const rDisp=Math.max(18,Math.round(32*scale))+'px';
-  container.querySelectorAll('.t-display').forEach(el=>el.style.fontSize=tDisp);
-  container.querySelectorAll('.exam-col-title').forEach(el=>el.style.fontSize=title);
-  container.querySelectorAll('.ms-item').forEach(el=>el.style.fontSize=ms);
-  container.querySelectorAll('.col-reading-disp').forEach(el=>el.style.fontSize=rDisp);
-}
+  if(!n)return;
 
-// ── FULLSCREEN ──
-function applyFullscreenSizes(on){
-  if(on){
-    const vh=window.innerHeight;
-    const vw=window.innerWidth;
-    const n=Math.max(1, document.querySelectorAll('.exam-col').length);
-    // Scale based on both available height and per-column width
-    const colW=vw/n;
-    const heightScale=vh/800; // baseline 800px height
-    const widthScale=colW/280; // baseline 280px col width
-    const scale=Math.min(heightScale, widthScale, 1.2);
-    const base=Math.max(18, Math.min(Math.round(40*scale), 72))+'px';
-    const rdisp=Math.max(16, Math.min(Math.round(32*scale), 56))+'px';
-    const ms=Math.max(8, Math.min(Math.round(10*scale), 14))+'px';
-    const title=Math.max(13, Math.min(Math.round(20*scale), 32))+'px';
-    const clk=Math.max(28, Math.min(Math.round(40*scale*1.1), 80))+'px';
-    document.querySelectorAll('.t-display').forEach(el=>el.style.fontSize=base);
-    document.querySelectorAll('.col-reading-disp').forEach(el=>el.style.fontSize=rdisp);
-    document.querySelectorAll('.ms-item').forEach(el=>el.style.fontSize=ms);
-    document.querySelectorAll('.exam-col-title').forEach(el=>el.style.fontSize=title);
-    const clkEl=document.getElementById('live-clock');if(clkEl)clkEl.style.fontSize=clk;
+  const isFS=!!document.fullscreenElement;
+  const vw=isFS?window.innerWidth:container.offsetWidth||window.innerWidth*0.9;
+  const vhTotal=window.innerHeight;
+
+  // Measure fixed elements that take space outside the columns
+  const clkEl=document.getElementById('live-clock');
+  const ctrlEl=document.getElementById('global-controls');
+  const divEl=document.querySelector('.divider');
+  const clkH=clkEl?clkEl.offsetHeight+parseInt(getComputedStyle(clkEl).marginBottom||0):50;
+  const ctrlH=ctrlEl?ctrlEl.offsetHeight+16:60;
+  const divH=divEl?divEl.offsetHeight+16:20;
+
+  // Available height for the columns themselves
+  const cardPad=isFS?0:64; // .card padding top+bottom
+  const availH=vhTotal - clkH - ctrlH - divH - cardPad;
+
+  const colW=vw/n;
+  const widthScale=colW/280;
+  const heightScale=availH/480; // baseline column content height
+  const maxScale=isFS?2.2:1.8;
+  const s=Math.max(0.35, Math.min(widthScale, heightScale, maxScale));
+
+  _colScale=s;
+  container.style.setProperty('--cs', s.toString());
+
+  if(Math.abs(s - (_lastScale||0)) > 0.04){
+    _lastScale=s;
+    refreshSVGSizes();
+  }
+
+  // Scale the clock too in fullscreen
+  if(isFS){
+    const clkSize=clamp(Math.round(36*s),24,90);
+    if(clkEl)clkEl.style.fontSize=clkSize+'px';
   } else {
-    document.querySelectorAll('.t-display,.col-reading-disp,.ms-item,.exam-col-title').forEach(el=>el.style.fontSize='');
-    const clk=document.getElementById('live-clock');if(clk)clk.style.fontSize='';
+    if(clkEl)clkEl.style.fontSize='';
   }
 }
+let _lastScale=1;
+function refreshSVGSizes(){
+  // Re-render each timer's SVG at the current scale
+  exams.forEach(exam=>{
+    exam.timers.forEach(timer=>{
+      const r=Math.round(timer.r*_colScale);
+      const oldSvg=document.getElementById('arc-'+timer.id);
+      if(!oldSvg)return;
+      const wrapper=oldSvg.closest('div[style*="position:relative"]');
+      if(!wrapper)return;
+      const newHtml=makeSVG(timer.r,timer.id);
+      const tmp=document.createElement('div');
+      tmp.innerHTML=newHtml;
+      const newWrapper=tmp.firstElementChild;
+      if(newWrapper)wrapper.replaceWith(newWrapper);
+    });
+  });
+  // Re-apply arc states
+  refreshTimers();
+}
+function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+
+// Keep old names as aliases
+function scaleColumns(){sizeColumns();}
+function applyFullscreenSizes(on){sizeColumns();}
 function toggleFullscreen(){if(!document.fullscreenElement)document.documentElement.requestFullscreen().catch(()=>{});else document.exitFullscreen().catch(()=>{});}
 document.addEventListener('fullscreenchange',()=>{
   const on=!!document.fullscreenElement;
@@ -2380,7 +2434,7 @@ document.addEventListener('fullscreenchange',()=>{
   document.body.classList.toggle('is-fullscreen',on);
   setTimeout(()=>applyFullscreenSizes(on),60);
 });
-window.addEventListener('resize',()=>{if(document.fullscreenElement)applyFullscreenSizes(true);else scaleColumns();});
+window.addEventListener('resize',()=>{sizeColumns();});
 
 // ── QUIT ──
 // ── WAKE LOCK ──
@@ -2409,14 +2463,11 @@ function confirmQuit(){
   const row=document.createElement('div');row.style.cssText='display:flex;gap:10px';
   const bc=document.createElement('button');
   bc.style.cssText='flex:1;padding:10px;border:1px solid #d0cdc6;border-radius:10px;background:#fff;font-size:15px;font-family:inherit;cursor:pointer';
-  bc.textContent=t('cancel');
-  bc.onclick=function(){document.getElementById('quit-confirm-overlay').remove();};
+  bc.textContent=t('cancel');bc.onclick=function(){document.getElementById('quit-confirm-overlay').remove();};
   const bq=document.createElement('button');
   bq.style.cssText='flex:1;padding:10px;border:none;border-radius:10px;background:#c0392b;color:#fff;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer';
-  bq.textContent=t('quit');
-  bq.onclick=function(){document.getElementById('quit-confirm-overlay').remove();doConfirmedQuit();};
-  row.appendChild(bc);row.appendChild(bq);
-  box.appendChild(p1);box.appendChild(p2);box.appendChild(row);
+  bq.textContent=t('quit');bq.onclick=function(){document.getElementById('quit-confirm-overlay').remove();doConfirmedQuit();};
+  row.appendChild(bc);row.appendChild(bq);box.appendChild(p1);box.appendChild(p2);box.appendChild(row);
   overlay.appendChild(box);document.body.appendChild(overlay);
 }
 function doConfirmedQuit(){
@@ -2529,13 +2580,8 @@ addExam();
   updateLogoPreview(); // show current logo in settings preview
 })();
 </script>
-
 <script>
-  if('serviceWorker' in navigator){
-    window.addEventListener('load', ()=>{
-      navigator.serviceWorker.register('service-worker.js').catch(()=>{});
-    });
-  }
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('service-worker.js').catch(()=>{});});}
 </script>
 </body>
 </html>
