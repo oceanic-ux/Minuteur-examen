@@ -1339,6 +1339,8 @@ function startAll(){
   buildColumns();
   scaleColumns();
   refreshGlobalControls();
+  // Launch all exams immediately
+  launchAllWaiting();
 
   if(intervalId)clearInterval(intervalId);
   if(clockInterval)clearInterval(clockInterval);
@@ -1478,14 +1480,16 @@ function colHTML(exam){
 // ── GLOBAL CONTROLS ──
 function refreshGlobalControls(){
   const waiting=exams.filter(e=>e.status==='waiting');
-  const btn=document.getElementById('start-all-waiting-btn');
-  if(waiting.length>1){
+  const container=document.getElementById('global-controls');
+  if(!container)return;
+  let btn=document.getElementById('start-all-waiting-btn');
+  if(waiting.length>0){
     if(!btn){
-      const b=document.createElement('button');
-      b.className='ctrl-btn green';b.id='start-all-waiting-btn';
-      b.onclick=launchAllWaiting;
-      b.innerHTML=`<svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:#fff"><polygon points="5 3 19 12 5 21"/></svg> ${'Démarrer tous'}`;
-      document.getElementById('global-controls').appendChild(b);
+      btn=document.createElement('button');
+      btn.className='ctrl-btn green';btn.id='start-all-waiting-btn';
+      btn.onclick=launchAllWaiting;
+      btn.innerHTML='<svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:#fff"><polygon points="5 3 19 12 5 21"/></svg> Démarrer tous';
+      container.appendChild(btn);
     }
   } else {
     if(btn)btn.remove();
