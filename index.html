@@ -536,14 +536,15 @@ function resetTemplate(event){
 // ── IB ANNOUNCEMENTS TABLE ──
 // null = no announcement for this event/type
 // Functions receive (exam, lang, now) where now=Date object at trigger time
-function ibText(type, event, lang, exam, now){
+function ibText(type, event, lang, exam, now, timer){
   const fr=lang==='fr';
-  const fr2=lang==='fr';
-  const dur=fmtSpoken(exam.timers.find(ti=>ti.label==='Principal')?.total||0,fr2);
-  const heure=now?(now.getHours()+(fr2?' heures ':' hours ')+now.getMinutes().toString().padStart(2,'0')):'';
+  // Use specific timer duration if provided, otherwise principal
+  const timerForDur=timer||exam.timers.find(ti=>ti.label==='Principal');
+  const dur=fmtSpoken(timerForDur?.total||0,fr);
+  const isExtra=timer&&timer.label!=='Principal';
+  const heure=now?(now.getHours()+(fr?' heures ':' hours ')+now.getMinutes().toString().padStart(2,'0')):'';
   const heureEn=now?(now.getHours()+':'+(now.getMinutes()<10?'0':'')+now.getMinutes()):'';
 
-  // Reading start — same for all types except mcq (no reading)
   if(event==='readingStart'){
     if(type==='mcq')return null;
     return fr
@@ -551,7 +552,6 @@ function ibText(type, event, lang, exam, now){
       :"You may now open your examination paper. Your reading time starts now.";
   }
 
-  // Reading end — same for all types except mcq
   if(event==='readingEnd'){
     if(type==='mcq')return null;
     return fr
@@ -559,21 +559,18 @@ function ibText(type, event, lang, exam, now){
       :`Your reading time is over. You have ${dur} for this examination paper. You may start to write. The time now is ${heureEn}.`;
   }
 
-  // Exam start (only relevant for mcq which has no reading)
   if(event==='examStart'){
-    if(type!=='mcq')return null; // others use readingEnd as the start signal
+    if(type!=='mcq')return null;
     return fr
       ?`Vous pouvez commencer à écrire. Il est ${heure}.`
       :`You may now start the examination. The time now is ${heureEn}.`;
   }
 
-  // 30-minute warning — all types except acq
   if(event==='alert30'){
     if(type==='acq')return null;
     return fr?"Il vous reste 30 minutes.":"The time remaining is 30 minutes.";
   }
 
-  // 5-minute warning
   if(event==='alert5'){
     if(type==='acq')return null;
     if(type==='ns')
@@ -589,7 +586,6 @@ function ibText(type, event, lang, exam, now){
     return null;
   }
 
-  // End of exam — same for all types
   if(event==='end'){
     return fr
       ?"L'épreuve est terminée. Veuillez arrêter d'écrire immédiatement. Il ne vous est pas permis d'ajouter quoi que ce soit à vos réponses ni de les modifier."
@@ -599,47 +595,61 @@ function ibText(type, event, lang, exam, now){
   return null;
 }
 
-// Group exams by their IB announcement text, return array of {text, exams[]}
-// exams with null text are omitted
+// Group announcements by text. For events that include duration (readingEnd),
+// group per-timer so extra-time candidates get the correct duration announced.
+// Returns array of {text, exams[], timerLabel} where timerLabel is null for exam-level events.
 function ibGroupAnnouncements(examList, event, now){
-  const groups={}; // text → [exam, ...]
+  const groups={}; // text → {exams:[], timerLabel, timerIds:[]}
+  const durationEvents=['readingEnd']; // events where timer duration matters
+
   examList.forEach(exam=>{
-    const text=ibText(exam.ibType||'ns', event, announceLang, exam, now);
-    if(!text)return;
-    if(!groups[text])groups[text]=[];
-    groups[text].push(exam);
-  });
-  return Object.entries(groups).map(([text,exams])=>({text,exams}));
-}
-
-// Build prefix: "Pour Maths : " or "Pour Maths et Français : "
-// showExtraTime=true only when the announcement differs for extra-time timers
-function buildPrefix(examList, allRunningExams, fr, showExtraTime=false){
-  const allCovered = examList.length >= allRunningExams.length;
-  if(allCovered && !showExtraTime) return ''; // announcement applies to all, no prefix
-
-  const parts = examList.map(e => {
-    const extras = showExtraTime && e.timers
-      ? e.timers.filter(ti=>!ti.done && ti.label!=='Principal').map(ti=>ti.label)
-      : [];
-    if(allCovered){
-      // Only show extra time label if requested
-      return extras.length ? (fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`) : null;
+    if(durationEvents.includes(event)){
+      // Fire once per active timer so each duration is announced correctly
+      exam.timers.filter(t=>!t.done).forEach(timer=>{
+        const text=ibText(exam.ibType||'ns', event, announceLang, exam, now, timer);
+        if(!text)return;
+        const key=text+'||'+timer.label; // group by text+timerLabel
+        if(!groups[key])groups[key]={text,items:[],timerLabel:timer.label};
+        groups[key].items.push({exam,timer});
+      });
+    } else {
+      const text=ibText(exam.ibType||'ns', event, announceLang, exam, now);
+      if(!text)return;
+      if(!groups[text])groups[text]={text,items:[],timerLabel:null};
+      groups[text].items.push({exam,timer:null});
     }
-    if(extras.length)
-      return fr ? `${e.title}, temps supplémentaire de ${joinList(extras,fr)}` : `${e.title}, additional time of ${joinList(extras,fr)}`;
-    return e.title;
-  }).filter(Boolean);
+  });
 
-  if(!parts.length) return '';
-  return (fr ? `Pour ${joinList(parts,fr)} : ` : `For ${joinList(parts,fr)}: `);
+  return Object.values(groups).map(g=>({
+    text:g.text,
+    exams:[...new Set(g.items.map(i=>i.exam))],
+    timers:g.items.map(i=>i.timer).filter(Boolean),
+    timerLabel:g.timerLabel
+  }));
 }
 
 function ibBuildAnnouncement(group, allRunningExams){
   const fr=announceLang==='fr';
-  // IB: groups already formed by identical text, no need to mention extra time
-  const prefix = buildPrefix(group.exams, allRunningExams, fr, false);
-  return prefix + group.text;
+  const allTimers=allRunningExams.flatMap(e=>e.timers.filter(t=>!t.done));
+  // If this group covers all active timers → no prefix needed
+  const groupTimerCount=group.timers.length||group.exams.length;
+  const totalActive=group.timerLabel
+    ? allTimers.filter(t=>t.label===group.timerLabel).length // same timer type across exams
+    : allRunningExams.length;
+
+  if(groupTimerCount>=totalActive) return group.text;
+
+  // Build prefix with exam names and extra-time label if applicable
+  const parts=group.exams.map(e=>{
+    if(group.timerLabel&&group.timerLabel!=='Principal'){
+      return fr
+        ?`${e.title||('Épreuve '+e.id)}, temps supplémentaire de ${group.timerLabel}`
+        :`${e.title||('Exam '+e.id)}, additional time of ${group.timerLabel}`;
+    }
+    return e.title||('Épreuve '+e.id);
+  });
+  const list=joinList(parts,fr);
+  return (fr?`Pour ${list} : `:`For ${list}: `)+group.text;
 }
 
 function addExam(){
@@ -658,23 +668,6 @@ function removeExam(eid){
   examDefs=examDefs.filter(e=>e.id!==eid);
   renderExamList();
 }
-function toggleExamReading(eid){
-  const def=examDefs.find(e=>e.id===eid);if(!def)return;
-  def.readingOn=def.readingOn===false?true:false;
-  const sw=document.getElementById('sw-reading-'+eid);
-  const lbl=document.getElementById('reading-label-'+eid);
-  if(sw)sw.classList.toggle('on',def.readingOn!==false);
-  if(lbl)lbl.textContent=(def.readingOn!==false?'Temps de lecture ✓':'Temps de lecture —');
-}
-
-function toggleIBMode(){
-  ibMode=!ibMode;
-  const sw=document.getElementById('sw-ib');
-  if(sw)sw.classList.toggle('on',ibMode);
-  renderExamList();
-  savePrefs();
-}
-
 function toggleExtra(eid,key){const def=examDefs.find(e=>e.id===eid);if(!def)return;const on=Object.values(def.tog).filter(Boolean).length;if(def.tog[key]&&on<=1)return;def.tog[key]=!def.tog[key];const btn=document.getElementById(`et-${eid}-${key}`);if(btn){btn.classList.toggle('on',def.tog[key]);btn.querySelector('.sw-sm').classList.toggle('on',def.tog[key]);}checkStart();}
 function renderExamList(){
   // Save current durations and ibType before re-render
@@ -690,64 +683,51 @@ function renderExamList(){
     const rt=document.getElementById('inp-reading-on-'+def.id);
     if(rt)def.readingOn=rt.checked;
   });
-  let listHtml='';
-  examDefs.forEach(function(def,i){
-    const removeBtn=examDefs.length>1
-      ?('<button class="exam-card-remove" onclick="removeExam('+def.id+')" title="Supprimer">\uD83D\uDDD1</button>')
-      :'<button class="exam-card-remove" style="opacity:.25;cursor:not-allowed" disabled>\uD83D\uDDD1</button>';
-    const ibSel=ibMode
-      ?('<div class="field" style="margin-bottom:0">'
-        +'<label style="font-size:12px;color:#1a4a8a;font-weight:500">Type d\'épreuve IB</label>'
-        +'<select id="inp-ibtype-'+def.id+'" style="width:100%;padding:6px 8px;border:1px solid #d0cdc6;border-radius:7px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none" '
-        +'onchange="examDefs.find(function(e){return e.id==='+def.id+';}).ibType=this.value">'
-        +'<option value="ns"'+(def.ibType==='ns'?' selected':'')+'>Non-structuré</option>'
-        +'<option value="ss"'+(def.ibType==='ss'?' selected':'')+'>Structuré / semi-structuré</option>'
-        +'<option value="mcq"'+(def.ibType==='mcq'?' selected':'')+'>QCM (multiple choice)</option>'
-        +'<option value="acq"'+(def.ibType==='acq'?' selected':'')+'>Acquisition de langues</option>'
-        +'</select></div>')
-      :'';
-    const readingLabel=def.readingOn!==false?'Temps de lecture ✓':'Temps de lecture —';
-    const swOnClass=def.readingOn!==false?' on':'';
-    listHtml+='<div class="exam-card" id="ecard-'+def.id+'">'
-      +'<div class="exam-card-header">'
-      +'<span class="exam-card-num">Épreuve '+(i+1)+'</span>'
-      +removeBtn
-      +'</div>'
-      +'<div class="field" style="margin-bottom:10px">'
-      +'<label>Nom de l\'épreuve</label>'
-      +'<input type="text" id="inp-title-'+def.id+'" placeholder="ex: Maths HL" value="'+escHtml(def.title)+'" '
-      +'oninput="examDefs.find(function(e){return e.id==='+def.id+';}).title=this.value">'
-      +'</div>'
-      +'<div class="time-row">'
-      +'<div class="field"><label>H</label><input type="number" id="inp-h-'+def.id+'" min="0" max="23" value="'+(def._h!==undefined?def._h:'0')+'" oninput="checkStart()"></div>'
-      +'<div class="field"><label>Min</label><input type="number" id="inp-m-'+def.id+'" min="0" max="59" value="'+(def._m!==undefined?def._m:'60')+'" oninput="checkStart()"></div>'
-      +'<div class="field"><label>Sec</label><input type="number" id="inp-s-'+def.id+'" min="0" max="59" value="'+(def._s!==undefined?def._s:'0')+'" oninput="checkStart()"></div>'
-      +'</div>'
-      +'<div class="section-title" style="margin-bottom:6px">Temps supplémentaire</div>'
-      +'<div class="extra-toggles" style="margin-bottom:8px">'
-      +'<div class="extra-toggle on" id="et-'+def.id+'-main" onclick="toggleExtra('+def.id+',\'main\')"><div class="sw-sm on"></div>Principal</div>'
-      +'<div class="extra-toggle '+(def.tog.t25?'on':'')+'" id="et-'+def.id+'-t25" onclick="toggleExtra('+def.id+',\'t25\')">'
-      +'<div class="sw-sm '+(def.tog.t25?'on':'')+'"></div>'
-      +'+<input type="text" id="inp-p1-'+def.id+'" value="'+escHtml(def.p1||'25%')+'" '
-      +'style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit" '
-      +'onclick="event.stopPropagation()" oninput="examDefs.find(function(e){return e.id==='+def.id+';}).p1=this.value">'
-      +'</div>'
-      +'<div class="extra-toggle '+(def.tog.t50?'on':'')+'" id="et-'+def.id+'-t50" onclick="toggleExtra('+def.id+',\'t50\')">'
-      +'<div class="sw-sm '+(def.tog.t50?'on':'')+'"></div>'
-      +'+<input type="text" id="inp-p2-'+def.id+'" value="'+escHtml(def.p2||'50%')+'" '
-      +'style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit" '
-      +'onclick="event.stopPropagation()" oninput="examDefs.find(function(e){return e.id==='+def.id+';}).p2=this.value">'
-      +'</div>'
-      +'</div>'
-      +ibSel
-      +'<div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;background:#f8f6f2;border-radius:8px;cursor:pointer" '
-      +'onclick="toggleExamReading('+def.id+')">'
-      +'<span style="font-size:13px;color:#666;flex:1" id="reading-label-'+def.id+'">'+readingLabel+'</span>'
-      +'<div class="sw'+swOnClass+'" id="sw-reading-'+def.id+'"></div>'
-      +'</div>'
-      +'</div>';
-  });
-  document.getElementById('exam-list').innerHTML=listHtml;
+  document.getElementById('exam-list').innerHTML=examDefs.map((def,i)=>`
+    <div class="exam-card" id="ecard-${def.id}">
+      <div class="exam-card-header">
+        <span class="exam-card-num">${t('examLabel',i)}</span>
+        ${examDefs.length>1
+          ? `<button class="exam-card-remove" onclick="removeExam(${def.id})" title="${t('quit')}">🗑</button>`
+          : `<button class="exam-card-remove" style="opacity:.25;cursor:not-allowed" disabled>🗑</button>`}
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>${t('titleLabel')}</label>
+        <input type="text" id="inp-title-${def.id}" placeholder="${t('titlePlaceholder')}" value="${escHtml(def.title)}" oninput="examDefs.find(e=>e.id===${def.id}).title=this.value">
+      </div>
+      <div class="time-row">
+        <div class="field"><label>${t('hoursLabel')}</label><input type="number" id="inp-h-${def.id}" min="0" max="23" value="${def._h!==undefined?def._h:'0'}" oninput="checkStart()"></div>
+        <div class="field"><label>${t('minutesLabel')}</label><input type="number" id="inp-m-${def.id}" min="0" max="59" value="${def._m!==undefined?def._m:'60'}" oninput="checkStart()"></div>
+        <div class="field"><label>${t('secondsLabel')}</label><input type="number" id="inp-s-${def.id}" min="0" max="59" value="${def._s!==undefined?def._s:'0'}" oninput="checkStart()"></div>
+      </div>
+      <div class="section-title" style="margin-bottom:6px">${t('extrasSection')}</div>
+      <div class="extra-toggles" style="margin-bottom:8px">
+        <div class="extra-toggle on" id="et-${def.id}-main" onclick="toggleExtra(${def.id},'main')"><div class="sw-sm on"></div>Principal</div>
+        <div class="extra-toggle ${def.tog.t25?'on':''}" id="et-${def.id}-t25" onclick="toggleExtra(${def.id},'t25')">
+          <div class="sw-sm ${def.tog.t25?'on':''}"></div>
+          +<input type="text" id="inp-p1-${def.id}" value="${escHtml(def.p1||'25%')}"
+            style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit"
+            onclick="event.stopPropagation()" oninput="examDefs.find(e=>e.id===${def.id}).p1=this.value">
+        </div>
+        <div class="extra-toggle ${def.tog.t50?'on':''}" id="et-${def.id}-t50" onclick="toggleExtra(${def.id},'t50')">
+          <div class="sw-sm ${def.tog.t50?'on':''}"></div>
+          +<input type="text" id="inp-p2-${def.id}" value="${escHtml(def.p2||'50%')}"
+            style="width:42px;padding:1px 4px;border:1px solid #c0bdb6;border-radius:4px;font-size:12px;font-family:inherit;text-align:center;background:#fff;color:inherit"
+            onclick="event.stopPropagation()" oninput="examDefs.find(e=>e.id===${def.id}).p2=this.value">
+        </div>
+      </div>
+      ${ibMode?`<div class="field" style="margin-bottom:0">
+        <label style="font-size:12px;color:#1a4a8a;font-weight:500">${t('ibTypeLabel')}</label>
+        <select id="inp-ibtype-${def.id}" class="ib-type-select" onchange="examDefs.find(e=>e.id===${def.id}).ibType=this.value">
+          ${Object.entries(t('ibTypes')).map(([v,l])=>`<option value="${v}" ${def.ibType===v?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>`:''}
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;background:#f8f6f2;border-radius:8px;cursor:pointer"
+           onclick="toggleExamReading(${def.id})">
+        <span style="font-size:13px;color:#666;flex:1" id="reading-label-${def.id}">${def.readingOn!==false?t('readingName')+'  ✓':t('readingName')+'  —'}</span>
+        <div class="sw${def.readingOn!==false?' on':''}" id="sw-reading-${def.id}"></div>
+      </div>
+    </div>`).join('');
   checkStart();
 }
 function checkStart(){
@@ -762,7 +742,13 @@ function checkStart(){
 }
 
 // ── LOGO / SVG ──
-function makeLogo(size){return`<img src="Haut-Lac-logo.svg" width="${size}" height="${size}" alt="Haut-Lac" style="display:block;object-fit:contain;pointer-events:none">`;}
+var _logoDataURI="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjwhLS0gQ3JlYXRlZCB3aXRoIElua3NjYXBlIChodHRwOi8vd3d3Lmlua3NjYXBlLm9yZy8pIC0tPgoKPHN2ZwogICB3aWR0aD0iNTBtbSIKICAgaGVpZ2h0PSI0OC41NDcwMDFtbSIKICAgdmlld0JveD0iMCAwIDUwIDQ4LjU0NzAwMSIKICAgdmVyc2lvbj0iMS4xIgogICBpZD0ic3ZnNzUxIgogICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgIHhtbG5zOnN2Zz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxkZWZzCiAgICAgaWQ9ImRlZnM3NDgiIC8+CiAgPGcKICAgICBpZD0ibGF5ZXIxIgogICAgIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0xNDguNjY5NDksLTE1My45MTMwMSkiPgogICAgPGcKICAgICAgIHRyYW5zZm9ybT0idHJhbnNsYXRlKDExMC4yMDY3OCw3MS42NzU3NDkpIgogICAgICAgaWQ9Imc5NDEiPgogICAgICA8ZwogICAgICAgICB0cmFuc2Zvcm09Im1hdHJpeCgxLjExODQ3MDksMCwwLDEuMTE4NDcwOSw5Ny4zNzkyMDMsLTYxLjAwMjE4NykiCiAgICAgICAgIGlkPSJnOTI3Ij4KICAgICAgICA8ZwogICAgICAgICAgIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0yNy42ODg1NCwxMi4xMjI2NSkiCiAgICAgICAgICAgaWQ9Imc5MTciPgogICAgICAgICAgPHJlY3QKICAgICAgICAgICAgIHk9IjE0NS42NjIzNCIKICAgICAgICAgICAgIHg9Ii0yLjAwOTkwNTgiCiAgICAgICAgICAgICBoZWlnaHQ9IjYuMzA4ODcwOCIKICAgICAgICAgICAgIHdpZHRoPSI2LjM2NDcwMTMiCiAgICAgICAgICAgICBpZD0icmVjdDkwOSIKICAgICAgICAgICAgIHN0eWxlPSJmaWxsOiNmZjAwMDA7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOm5vbmU7c3Ryb2tlLXdpZHRoOjAuMTtzdHJva2UtbWl0ZXJsaW1pdDoxIiAvPgogICAgICAgICAgPGcKICAgICAgICAgICAgIHRyYW5zZm9ybT0ibWF0cml4KDEuMiwwLDAsMS4yLDAuMDYzNDA0MDQsLTI5LjM5ODg4NykiCiAgICAgICAgICAgICBpZD0iZzkxNSI+CiAgICAgICAgICAgIDxyZWN0CiAgICAgICAgICAgICAgIHN0eWxlPSJmaWxsOiNmZmZmZmY7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOm5vbmU7c3Ryb2tlLXdpZHRoOjAuMTI7c3Ryb2tlLW1pdGVybGltaXQ6MSIKICAgICAgICAgICAgICAgaWQ9InJlY3Q5MTEiCiAgICAgICAgICAgICAgIHdpZHRoPSIzLjk2IgogICAgICAgICAgICAgICB4PSItMS4wNTU3OTk0IgogICAgICAgICAgICAgICB5PSIxNDcuOTczMDUiCiAgICAgICAgICAgICAgIGhlaWdodD0iMS4wNzk5OTk5IiAvPgogICAgICAgICAgICA8cmVjdAogICAgICAgICAgICAgICBoZWlnaHQ9IjEuMDc5OTk5OSIKICAgICAgICAgICAgICAgeT0iLTEuNDY0MjAwNiIKICAgICAgICAgICAgICAgeD0iMTQ2LjUzMzA1IgogICAgICAgICAgICAgICB3aWR0aD0iMy45NiIKICAgICAgICAgICAgICAgaWQ9InJlY3Q5MTMiCiAgICAgICAgICAgICAgIHN0eWxlPSJmaWxsOiNmZmZmZmY7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOm5vbmU7c3Ryb2tlLXdpZHRoOjAuMTI7c3Ryb2tlLW1pdGVybGltaXQ6MSIKICAgICAgICAgICAgICAgdHJhbnNmb3JtPSJyb3RhdGUoOTApIiAvPgogICAgICAgICAgPC9nPgogICAgICAgIDwvZz4KICAgICAgICA8dGV4dAogICAgICAgICAgIHhtbDpzcGFjZT0icHJlc2VydmUiCiAgICAgICAgICAgc3R5bGU9ImZvbnQtc3R5bGU6bm9ybWFsO2ZvbnQtd2VpZ2h0Om5vcm1hbDtmb250LXNpemU6MTEuMjg4OXB4O2xpbmUtaGVpZ2h0OjEuMjU7Zm9udC1mYW1pbHk6c2Fucy1zZXJpZjtmaWxsOiMyMDQ0ODA7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOm5vbmU7c3Ryb2tlLXdpZHRoOjAuMjY0NTgzIgogICAgICAgICAgIHg9Ii01My4zOTg0MTgiCiAgICAgICAgICAgeT0iMTYzLjk2OTY4IgogICAgICAgICAgIGlkPSJ0ZXh0OTIxIj48dHNwYW4KICAgICAgICAgICAgIGlkPSJ0c3BhbjkxOSIKICAgICAgICAgICAgIHg9Ii01My4zOTg0MTgiCiAgICAgICAgICAgICB5PSIxNjMuOTY5NjgiCiAgICAgICAgICAgICBzdHlsZT0iZm9udC1zdHlsZTpub3JtYWw7Zm9udC12YXJpYW50Om5vcm1hbDtmb250LXdlaWdodDpub3JtYWw7Zm9udC1zdHJldGNoOm5vcm1hbDtmb250LXNpemU6MTEuMjg4OXB4O2ZvbnQtZmFtaWx5OidIZWx2ZXRpY2EgTmV1ZSc7LWlua3NjYXBlLWZvbnQtc3BlY2lmaWNhdGlvbjonSGVsdmV0aWNhIE5ldWUnO2ZpbGw6IzIwNDQ4MDtmaWxsLW9wYWNpdHk6MTtzdHJva2Utd2lkdGg6MC4yNjQ1ODMiPmhhdXQ8L3RzcGFuPjwvdGV4dD4KICAgICAgICA8dGV4dAogICAgICAgICAgIGlkPSJ0ZXh0OTI1IgogICAgICAgICAgIHk9IjE2My45Njk2OCIKICAgICAgICAgICB4PSItMjIuMjYxMTQxIgogICAgICAgICAgIHN0eWxlPSJmb250LXN0eWxlOm5vcm1hbDtmb250LXdlaWdodDpub3JtYWw7Zm9udC1zaXplOjExLjI4ODlweDtsaW5lLWhlaWdodDoxLjI1O2ZvbnQtZmFtaWx5OnNhbnMtc2VyaWY7ZmlsbDojMjA0NDgwO2ZpbGwtb3BhY2l0eToxO3N0cm9rZTpub25lO3N0cm9rZS13aWR0aDowLjI2NDU4MyIKICAgICAgICAgICB4bWw6c3BhY2U9InByZXNlcnZlIj48dHNwYW4KICAgICAgICAgICAgIHN0eWxlPSJmb250LXN0eWxlOm5vcm1hbDtmb250LXZhcmlhbnQ6bm9ybWFsO2ZvbnQtd2VpZ2h0Om5vcm1hbDtmb250LXN0cmV0Y2g6bm9ybWFsO2ZvbnQtc2l6ZToxMS4yODg5cHg7Zm9udC1mYW1pbHk6J0hlbHZldGljYSBOZXVlJzstaW5rc2NhcGUtZm9udC1zcGVjaWZpY2F0aW9uOidIZWx2ZXRpY2EgTmV1ZSc7ZmlsbDojMjA0NDgwO2ZpbGwtb3BhY2l0eToxO3N0cm9rZS13aWR0aDowLjI2NDU4MyIKICAgICAgICAgICAgIHk9IjE2My45Njk2OCIKICAgICAgICAgICAgIHg9Ii0yMi4yNjExNDEiCiAgICAgICAgICAgICBpZD0idHNwYW45MjMiPmxhYzwvdHNwYW4+PC90ZXh0PgogICAgICA8L2c+CiAgICAgIDxnCiAgICAgICAgIGlkPSJnOTM5IgogICAgICAgICB0cmFuc2Zvcm09Im1hdHJpeCgxLjI5NDE3ODIsMCwwLDEuMjk0MTc4MiwxMTcuNjY1NzcsLTU1Ljc1ODU4KSI+CiAgICAgICAgPHBhdGgKICAgICAgICAgICBpZD0icGF0aDkyOSIKICAgICAgICAgICBkPSJtIC02MS4xNzAzMjIsMTI4LjU2Mzk4IGMgMCwwIDcuMTAwMzE4LC01LjEwMjYzIDEzLjI1Nzk2LC01LjEwMjYzIDYuMDgwNTA0LDAgMTIuOTE2NDc2LDQuNTEyMTUgMTcuODQzODk5LDQuMzI0ODIgNC45Mjc0MjMsLTAuMTg3MzMgNy40NzM5ODYsLTEuMTYxMTkgNy40NzM5ODYsLTEuMTYxMTkgMCwwIC0zLjM0NTQwNywyLjQ0ODYgLTcuODE5NDc0LDIuNTM1MjcgLTQuOTczMDYyLDAuMDk2MyAtMTEuNTcwNTAyLC00LjU4OTk4IC0xNy42OTM2NTEsLTQuNjkyMDMgLTYuMTIzMTUxLC0wLjEwMjA1IC0xMy4wNjI3Miw0LjA5NTc2IC0xMy4wNjI3Miw0LjA5NTc2IHoiCiAgICAgICAgICAgc3R5bGU9ImZpbGw6IzIwNDQ4MDtmaWxsLW9wYWNpdHk6MTtzdHJva2U6IzIwNDQ4MDtzdHJva2Utd2lkdGg6MC4xO3N0cm9rZS1saW5lY2FwOmJ1dHQ7c3Ryb2tlLWxpbmVqb2luOm1pdGVyO3N0cm9rZS1taXRlcmxpbWl0OjE7c3Ryb2tlLWRhc2hhcnJheTpub25lO3N0cm9rZS1vcGFjaXR5OjEiIC8+CiAgICAgICAgPHBhdGgKICAgICAgICAgICBpZD0icGF0aDkzMSIKICAgICAgICAgICBkPSJtIC01Ni4yOTI2NjQsMTI3LjgyMDggYyAwLDAgMy4yNzgzNjYsLTIuNjYxMjYgOC4yMTUxOTgsLTIuNjk5ODMgNC43MDU0MTgsLTAuMDc3MSA4LjI5MjMzNSwyLjc3Njk3IDguMjkyMzM1LDIuNzc2OTcgMCwwIC0zLjQ3MjA5MywtMS44ODU3MSAtOC4wNjA5MjIsLTEuODg5ODggLTUuMzIzNzc3LC0wLjAwNSAtOC40NDY2MTEsMS44MTI3NCAtOC40NDY2MTEsMS44MTI3NCB6IgogICAgICAgICAgIHN0eWxlPSJmaWxsOiMyMDQ0ODA7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOiMyMDQ0ODA7c3Ryb2tlLXdpZHRoOjAuMTtzdHJva2UtbGluZWNhcDpidXR0O3N0cm9rZS1saW5lam9pbjptaXRlcjtzdHJva2UtbWl0ZXJsaW1pdDoxO3N0cm9rZS1kYXNoYXJyYXk6bm9uZTtzdHJva2Utb3BhY2l0eToxIiAvPgogICAgICAgIDxwYXRoCiAgICAgICAgICAgaWQ9InBhdGg5MzMiCiAgICAgICAgICAgZD0ibSAtNjEuMTEzNzg4LDEyNy4zNTc5OCBjIDAsMCA0Ljk3NTQwMSwtMy40MzI2NSA4Ljc5MzczMywtNy43MTM4IDIuOTI3MTgxLC0zLjI4MTk5IDQuOTM2ODI5LC03LjQ0MzgyIDQuOTM2ODI5LC03LjQ0MzgyIDAsMCAwLjYxNzEwNywxLjMxMTM1IDEuMjcyNzc5LDIuMjM3IDAuNjU1NjcxLDAuOTI1NjYgMS41ODEzMjksMi4wMDU1OSAxLjU4MTMyOSwyLjAwNTU5IDAsMCAtMC42MTcxMDMsLTAuMDc3MSAtMS4wNzk5MzQsLTAuMzQ3MTIgLTAuNDYyODI3LC0wLjI2OTk5IC0wLjkyNTY1NSwtMC43MzI4MSAtMC45MjU2NTUsLTAuNzMyODEgMCwwIC0zLjUwOTc4LDMuODU2OSAtNS43NDY3ODIsNS43NDY3OCAtMi4yMzcwMDEsMS44ODk4OCAtOC44MzIyOTksNi4yNDgxOCAtOC44MzIyOTksNi4yNDgxOCB6IgogICAgICAgICAgIHN0eWxlPSJmaWxsOiM1YjhlNDE7ZmlsbC1vcGFjaXR5OjE7c3Ryb2tlOiM1YjhlNDE7c3Ryb2tlLXdpZHRoOjAuMTtzdHJva2UtbGluZWNhcDpidXR0O3N0cm9rZS1saW5lam9pbjptaXRlcjtzdHJva2UtbWl0ZXJsaW1pdDoxO3N0cm9rZS1kYXNoYXJyYXk6bm9uZTtzdHJva2Utb3BhY2l0eToxIiAvPgogICAgICAgIDxwYXRoCiAgICAgICAgICAgc3R5bGU9ImZpbGw6IzViOGU0MTtmaWxsLW9wYWNpdHk6MTtzdHJva2U6IzViOGU0MTtzdHJva2Utd2lkdGg6MC4xO3N0cm9rZS1saW5lY2FwOmJ1dHQ7c3Ryb2tlLWxpbmVqb2luOm1pdGVyO3N0cm9rZS1taXRlcmxpbWl0OjE7c3Ryb2tlLWRhc2hhcnJheTpub25lO3N0cm9rZS1vcGFjaXR5OjEiCiAgICAgICAgICAgZD0ibSAtNDguNTM5NDM4LDEyMC43NTIwOSBjIDAsMCAyLjgxMzU3NiwtMi4yNjk5MiA1LjUxMTY4NSwtNS40NDEzIDIuMTgxMTYxLC0yLjU2Mzc3IDMuMTAyMzk2LC00Ljc5NjEzIDMuMTAyMzk2LC00Ljc5NjEzIDAsMCAwLjk3MDk3OCwxLjg2OTU0IDIuMjMyOTE5LDMuNDAwNzQgMS4xNDczMiwxLjM5MjEyIDIuNDM2NDU5LDMuMDEzMDUgMi40MzY0NTksMy4wMTMwNSAwLDAgLTEuNDM0Mzk2LC0xLjAzMTA3IC0yLjMxMzAxMywtMS44NTQzNSAtMC43NTQ2MjMsLTAuNzA3MSAtMS41NzQ4NSwtMS41NzQ4NiAtMS41NzQ4NSwtMS41NzQ4NiAwLDAgLTEuODI1MDgsMS43NTg0IC00LjEyMzYzMywzLjU3MjgxIC0xLjkwMjU3MiwxLjUwMTgzIC01LjI3MTk2MywzLjY4MDA0IC01LjI3MTk2MywzLjY4MDA0IHoiCiAgICAgICAgICAgaWQ9InBhdGg5MzUiIC8+CiAgICAgICAgPHBhdGgKICAgICAgICAgICBpZD0icGF0aDkzNyIKICAgICAgICAgICBkPSJtIC00MC4wMTU2ODksMTIyLjI1NjI4IGMgMCwwIDIuMzk1MTI5LC0xLjQyNDE5IDQuMTIzMjAxLC0zLjQzNTcxIDEuNjgxNjUzLC0xLjk1NzQ4IDIuNDA4MTU0LC0zLjkwOTA0IDIuNDA4MTU0LC0zLjkwOTA0IDAsMCAxLjk1ODA2OSwzLjI2MzQyIDMuNTgyODM0LDUuMjEzNDggMy4wNDQ2MzgsMy42NTQyMSA1LjQ0NDg0MSw1LjY3NDMxIDUuNDQ0ODQxLDUuNjc0MzEgMCwwIC0yLjY5NDUwNSwtMS44NTM3OSAtNS4wNTE0MTIsLTQuMzIyNzcgLTIuMDUxMTczLC0yLjE0ODcgLTMuNTQxODY5LC0zLjg4ODk5IC0zLjU0MTg2OSwtMy44ODg5OSAwLDAgLTAuNzgzNzE3LDAuOTQ4NDUgLTIuODg5NDI1LDIuNDU0MzEgLTEuOTcxNjE3LDEuNDA5OTYgLTQuMDc2MzI0LDIuMjE0NDEgLTQuMDc2MzI0LDIuMjE0NDEgeiIKICAgICAgICAgICBzdHlsZT0iZmlsbDojNWI4ZTQxO2ZpbGwtb3BhY2l0eTowLjg3NzA0OTtzdHJva2U6IzViOGU0MTtzdHJva2Utd2lkdGg6MC4xO3N0cm9rZS1saW5lY2FwOmJ1dHQ7c3Ryb2tlLWxpbmVqb2luOm1pdGVyO3N0cm9rZS1taXRlcmxpbWl0OjE7c3Ryb2tlLWRhc2hhcnJheTpub25lO3N0cm9rZS1vcGFjaXR5OjEiIC8+CiAgICAgIDwvZz4KICAgIDwvZz4KICA8L2c+Cjwvc3ZnPgo=";
+var _logoDataURIDefault=_logoDataURI; // keep original for reset
+
+function makeLogo(size){
+  var src=_logoDataURI;
+  return '<img src="'+src+'" width="'+size+'" height="'+size+'" alt="Haut-Lac" style="display:block;object-fit:contain;pointer-events:none">';
+}
 function makeSVG(r,tid,strokeColor){
   const c=r+9,sz=(r+9)*2,circ=(2*Math.PI*r).toFixed(2),sc=strokeColor||'#1a1a18';
   const ld=Math.max(16,Math.round((r-7)*2*0.82));
@@ -801,7 +787,6 @@ function setLang(l){
   });
   selectedVoice=null;populateVoices();
   if(_voiceSettingsOpen)buildVoiceSettingsPanel();
-  if(typeof currentTab!=='undefined'&&currentTab==='voice')buildVoiceAlertsPanel();
   savePrefs();
 }
 function populateVoices(){
@@ -1075,12 +1060,15 @@ function getTemplate(event){
   const lang=announceLang;
   return (_customTemplates[lang]&&_customTemplates[lang][event])||TMPL_DEFAULTS[lang][event]||[];
 }
+loadTemplates();
 
 // Render a template to a string, replacing tokens with runtime values
-function renderTemplate(event,{exam=null,minutes=null,now=null}={}){
+// timer: specific timer to use for duration (if null, uses Principal)
+function renderTemplate(event,{exam=null,minutes=null,now=null,timer=null}={}){
   const segs=getTemplate(event);
   const fr=announceLang==='fr';
-  const dur=exam?fmtSpoken(exam.timers.find(t=>t.label==='Principal')?.total||0,fr):'';
+  const timerForDur=timer||(exam?exam.timers.find(t=>t.label==='Principal'):null);
+  const dur=timerForDur?fmtSpoken(timerForDur.total||0,fr):'';
   const readingDur=exam?fmtSpoken(exam.readingTotal||0,fr):'';
   const heure=now?(fr?(now.getHours()+' heures '+now.getMinutes().toString().padStart(2,'0')):(now.getHours()+':'+ now.getMinutes().toString().padStart(2,'0'))):'';
   const restant=minutes!=null?fmtSpoken(minutes*60,fr):'';
@@ -1099,35 +1087,68 @@ function buildAnnouncementBase(event,options={}){
   return renderTemplate(event,options);
 }
 
-function buildReadingStartText(examList){
+// Group exams (or exam+timer pairs) by their rendered announcement text.
+// Returns [{text, exams[], timers[]}] — one entry per unique text.
+
+// Group exams by their rendered announcement text using only the Principal timer duration.
+// If no Principal, falls back to first active timer. Extra-time timers don't get
+// separate start/end announcements — only the Principal duration is announced.
+function groupByText(event, examList, now){
+  const groups={};
+  examList.forEach(exam=>{
+    const principal=exam.timers.find(t=>t.label==='Principal'&&!t.done)
+      ||exam.timers.find(t=>!t.done)
+      ||exam.timers[0];
+    const text=buildAnnouncementBase(event,{exam,now,timer:principal});
+    if(!text)return;
+    if(!groups[text])groups[text]={text,exams:[]};
+    groups[text].exams.push(exam);
+  });
+  return Object.values(groups);
+}
+
+// Build grouped announcements for a non-IB event.
+// Returns [{text, examIds, timerIds}] — one entry per unique announcement text.
+function buildGroupedAnnouncements(event, examList, now, allActiveExams){
   const fr=announceLang==='fr';
-  const exam=examList[0]||null;
-  const base=buildAnnouncementBase('readingStart',{exam,now:new Date()});
-  if(!base)return null;
+  const groups=groupByText(event, examList, now);
+
+  return groups.map(group=>{
+    const needsPrefix=group.exams.length<allActiveExams.length;
+    let text=group.text;
+    if(needsPrefix){
+      const list=joinList(group.exams.map(e=>e.title||('Épreuve '+e.id)),fr);
+      text=(fr?`Pour ${list} : `:`For ${list}: `)+group.text;
+    }
+    return {
+      text,
+      examIds:group.exams.map(e=>e.id),
+      timerIds:null
+    };
+  });
+}
+
+function buildReadingStartText(examList){
+  // readingStart has no duration — same for all
+  const now=new Date();
+  const fr=announceLang==='fr';
+  const base=buildAnnouncementBase('readingStart',{exam:examList[0]||null,now});
+  if(!base)return [{text:base,examIds:examList.map(e=>e.id),timerIds:null}];
   const allReading=exams.filter(e=>e.status==='reading');
-  if(examList.length===0||examList.length>=allReading.length)return base;
+  const needsPrefix=examList.length>0&&examList.length<allReading.length;
+  if(!needsPrefix)return [{text:base,examIds:examList.map(e=>e.id),timerIds:null}];
   const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
-  return (fr?`Pour ${list} : `:`For ${list}: `)+base;
+  return [{text:(fr?`Pour ${list} : `:`For ${list}: `)+base,examIds:examList.map(e=>e.id),timerIds:null}];
 }
 function buildReadingEndText(examList){
-  const fr=announceLang==='fr';
-  const exam=examList[0]||null;
-  const base=buildAnnouncementBase('readingEnd',{exam,now:new Date()});
-  if(!base)return null;
-  const totalRunning=exams.filter(e=>e.status==='running').length;
-  if(examList.length===0||examList.length>=totalRunning)return base;
-  const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
-  return (fr?`Pour ${list} : `:`For ${list}: `)+base;
+  const now=new Date();
+  const allRunning=exams.filter(e=>e.status==='running');
+  return buildGroupedAnnouncements('readingEnd',examList,now,allRunning);
 }
 function buildExamStartText(examList){
-  const fr=announceLang==='fr';
-  const exam=examList[0]||null;
-  const base=buildAnnouncementBase('examStart',{exam,now:new Date()});
-  if(!base)return null;
+  const now=new Date();
   const allRunning=exams.filter(e=>e.status==='running');
-  if(examList.length===0||examList.length>=allRunning.length)return base;
-  const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
-  return (fr?`Pour ${list} : `:`For ${list}: `)+base;
+  return buildGroupedAnnouncements('examStart',examList,now,allRunning);
 }
 function buildAlertTemplateText(event,minutes,timerContexts){
   // Build base from template with restant token
@@ -1182,7 +1203,272 @@ function ibAnnounce(examList, event, interrupt=false, examIds=null){
   const ids=examIds||examList.map(e=>e.id);
   groups.forEach(group=>{
     const text=ibBuildAnnouncement(group, allRunning);
-    announce(text,{interrupt,examIds:ids});
+    const tIds=group.timers&&group.timers.length>0?group.timers.map(t=>t.id):null;
+    announce(text,{interrupt,examIds:ids,timerIds:tIds});
+  });
+}
+
+function alertSound(text,examIds){
+  if(audioMode==='silence')return;
+  if(audioMode==='voice'){
+    if(ibMode){
+      if(typeof text==='string')announce(text,{interrupt:true,examIds});
+    } else {
+      announce(text,{interrupt:true,examIds});
+    }
+  }
+  beep(880,.18);setTimeout(()=>beep(1100,.18),220);
+}
+function alert30Sound(text,examIds){
+  if(audioMode==='silence'||!alert30Enabled)return;
+  if(audioMode==='voice'){
+    if(typeof text==='string')announce(text,{interrupt:true,examIds});
+  }
+  beep(660,.14);setTimeout(()=>beep(780,.14),170);
+}
+function endSound(text,examIds){
+  if(audioMode==='silence')return;
+  if(audioMode==='voice'&&typeof text==='string')announce(text,{interrupt:true,examIds});
+  beep(660,.2);setTimeout(()=>beep(880,.2),250);setTimeout(()=>beep(1100,.35),500);
+}
+function buildAlertText(minutes, timerContexts){
+  const fr=announceLang==='fr';
+  const minText=fr?(minutes<=1?'une minute':`${minutes} minutes`):(minutes<=1?'one minute':`${minutes} minutes`);
+  const base=fr?`Il reste ${minText}.`:`${minutes<=1?'One minute':minText} remaining.`;
+  if(!timerContexts||timerContexts.length===0)return base;
+
+  const runningExams=exams.filter(e=>e.status==='running');
+  const multipleExams=runningExams.length>1;
+  const totalActiveTimers=runningExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length,0);
+  const hasExtra=timerContexts.some(c=>c.isExtra);
+  // No prefix needed if all timers are alerting and none are extra
+  if(!multipleExams&&!hasExtra)return base;
+  if(timerContexts.length===totalActiveTimers&&!hasExtra)return base;
+
+  // Build prefix: group by exam
+  const examGroups={};
+  timerContexts.forEach(({examTitle,timerLabel,isExtra})=>{
+    if(!examGroups[examTitle])examGroups[examTitle]=[];
+    if(isExtra)examGroups[examTitle].push(timerLabel);
+  });
+  const allExamsCovered=Object.keys(examGroups).length>=runningExams.length;
+
+  const parts=Object.entries(examGroups).map(([title,extras])=>{
+    if(allExamsCovered){
+      // No exam names — only mention extra time if applicable
+      return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    }
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
+  }).filter(Boolean);
+
+  if(parts.length===0)return base;
+  const prefix=fr
+    ?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `)
+    :`For ${joinList(parts,fr)}: `;
+  return prefix+base;
+}
+
+function buildCombinedEndText(endBatch){
+  const fr=announceLang==='fr';
+  const base=fr?"Le temps est écoulé.":"Time is up.";
+  if(endBatch.length===0)return base;
+
+  const runningExams=exams.filter(e=>e.status==='running');
+  const multipleExams=runningExams.length>1;
+  const totalTimers=runningExams.reduce((n,e)=>n+e.timers.length,0);
+  const anyExtra=endBatch.some(({timer})=>timer.label!=='Principal');
+  if(endBatch.length>=totalTimers&&!anyExtra)return base;
+
+  const groups={};
+  endBatch.forEach(({exam,timer})=>{
+    if(!groups[exam.title])groups[exam.title]=[];
+    if(timer.label!=='Principal')groups[exam.title].push(timer.label);
+  });
+  const allExamsCovered=Object.keys(groups).length>=runningExams.length;
+
+  const parts=Object.entries(groups).map(([title,extras])=>{
+    if(allExamsCovered){
+      return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    }
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
+  }).filter(Boolean);
+
+  if(parts.length===0)return base;
+  const prefix2=fr
+    ?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `)
+    :`For ${joinList(parts,fr)}: `;
+  return prefix2+base;
+}
+
+// Build a single fluent sentence for one or multiple exams starting together
+// ── CUSTOM ANNOUNCEMENT TEMPLATES ──
+// Render a template to a string, replacing tokens with runtime values
+// timer: specific timer to use for duration (if null, uses Principal)
+function renderTemplate(event,{exam=null,minutes=null,now=null,timer=null}={}){
+  const segs=getTemplate(event);
+  const fr=announceLang==='fr';
+  const timerForDur=timer||(exam?exam.timers.find(t=>t.label==='Principal'):null);
+  const dur=timerForDur?fmtSpoken(timerForDur.total||0,fr):'';
+  const readingDur=exam?fmtSpoken(exam.readingTotal||0,fr):'';
+  const heure=now?(fr?(now.getHours()+' heures '+now.getMinutes().toString().padStart(2,'0')):(now.getHours()+':'+ now.getMinutes().toString().padStart(2,'0'))):'';
+  const restant=minutes!=null?fmtSpoken(minutes*60,fr):'';
+  return segs.map(seg=>{
+    if(seg.t!=null)return seg.t;
+    if(seg.k==='duree')return dur;
+    if(seg.k==='heure')return heure;
+    if(seg.k==='restant')return restant;
+    if(seg.k==='lecture')return readingDur;
+    return '';
+  }).join('').trim();
+}
+
+// Build announcement text using templates (non-IB)
+function buildAnnouncementBase(event,options={}){
+  return renderTemplate(event,options);
+}
+
+// Group exams (or exam+timer pairs) by their rendered announcement text.
+// Returns [{text, exams[], timers[]}] — one entry per unique text.
+// For events with {duree} token, groups by each timer's text separately.
+function groupByText(event, examList, now, useTimers=false){
+  const groups={};
+  examList.forEach(exam=>{
+    const timersToCheck=useTimers
+      ? exam.timers.filter(t=>!t.done)
+      : [null];
+    timersToCheck.forEach(timer=>{
+      const text=buildAnnouncementBase(event,{exam,now,timer});
+      if(!text)return;
+      const key=text+'|'+(timer?timer.id:'exam');
+      if(!groups[key])groups[key]={text,exams:[],timers:[]};
+      if(!groups[key].exams.includes(exam))groups[key].exams.push(exam);
+      if(timer)groups[key].timers.push(timer);
+    });
+  });
+  return Object.values(groups);
+}
+
+// Check if template uses duration token — if so, must group per-timer
+function templateUsesDuration(event){
+  return getTemplate(event).some(s=>s.k==='duree');
+}
+
+// Announce a non-IB event for a list of exams, grouping by text
+// Returns array of {text, examIds, timerIds} to announce
+function buildGroupedAnnouncements(event, examList, now, allActiveExams){
+  const fr=announceLang==='fr';
+  const useTimers=templateUsesDuration(event);
+  const groups=groupByText(event, examList, now, useTimers);
+  const totalActiveTimers=allActiveExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length,0);
+
+  return groups.map(group=>{
+    // Determine if prefix needed
+    const coveredExams=group.exams.length;
+    const coveredTimers=group.timers.length||coveredExams;
+    const totalRef=useTimers?totalActiveTimers:allActiveExams.length;
+    const needsPrefix=coveredTimers<totalRef;
+
+    let text=group.text;
+    if(needsPrefix){
+      const parts=group.exams.map(e=>{
+        const extraTimers=group.timers.filter(t=>t&&e.timers.includes(t)&&t.label!=='Principal');
+        if(extraTimers.length>0){
+          return fr
+            ?`${e.title||('Épreuve '+e.id)}, temps supplémentaire de ${joinList(extraTimers.map(t=>t.label),fr)}`
+            :`${e.title||('Exam '+e.id)}, additional time of ${joinList(extraTimers.map(t=>t.label),fr)}`;
+        }
+        return e.title||('Épreuve '+e.id);
+      });
+      const list=joinList(parts,fr);
+      text=(fr?`Pour ${list} : `:`For ${list}: `)+group.text;
+    }
+    return {
+      text,
+      examIds:group.exams.map(e=>e.id),
+      timerIds:group.timers.length>0?group.timers.map(t=>t.id):null
+    };
+  });
+}
+
+function buildReadingStartText(examList){
+  // readingStart has no duration — same for all
+  const now=new Date();
+  const fr=announceLang==='fr';
+  const base=buildAnnouncementBase('readingStart',{exam:examList[0]||null,now});
+  if(!base)return [{text:base,examIds:examList.map(e=>e.id),timerIds:null}];
+  const allReading=exams.filter(e=>e.status==='reading');
+  const needsPrefix=examList.length>0&&examList.length<allReading.length;
+  if(!needsPrefix)return [{text:base,examIds:examList.map(e=>e.id),timerIds:null}];
+  const list=joinList(examList.map(e=>e.title).filter(Boolean),fr);
+  return [{text:(fr?`Pour ${list} : `:`For ${list}: `)+base,examIds:examList.map(e=>e.id),timerIds:null}];
+}
+function buildReadingEndText(examList){
+  const now=new Date();
+  const allRunning=exams.filter(e=>e.status==='running');
+  return buildGroupedAnnouncements('readingEnd',examList,now,allRunning);
+}
+function buildExamStartText(examList){
+  const now=new Date();
+  const allRunning=exams.filter(e=>e.status==='running');
+  return buildGroupedAnnouncements('examStart',examList,now,allRunning);
+}
+function buildAlertTemplateText(event,minutes,timerContexts){
+  // Build base from template with restant token
+  const baseFromTemplate=renderTemplate(event,{minutes});
+  if(!baseFromTemplate)return null;
+  // Apply prefix logic if needed (multiple exams/extra time)
+  const fr=announceLang==='fr';
+  if(!timerContexts||timerContexts.length===0)return baseFromTemplate;
+  const runningExams=exams.filter(e=>e.status==='running');
+  const totalActiveTimers=runningExams.reduce((n,e)=>n+e.timers.filter(t=>!t.done).length,0);
+  const hasExtra=timerContexts.some(c=>c.isExtra);
+  if(runningExams.length<=1&&!hasExtra)return baseFromTemplate;
+  if(timerContexts.length===totalActiveTimers&&!hasExtra)return baseFromTemplate;
+  const examGroups={};
+  timerContexts.forEach(({examTitle,timerLabel,isExtra})=>{if(!examGroups[examTitle])examGroups[examTitle]=[];if(isExtra)examGroups[examTitle].push(timerLabel);});
+  const allExamsCovered=Object.keys(examGroups).length>=runningExams.length;
+  const parts=Object.entries(examGroups).map(([title,extras])=>{
+    if(allExamsCovered)return extras.length?(fr?`le temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
+  }).filter(Boolean);
+  if(parts.length===0)return baseFromTemplate;
+  return (fr?`Pour ${joinList(parts,fr)} : `:`For ${joinList(parts,fr)}: `)+baseFromTemplate;
+}
+function buildEndTemplateText(endBatch){
+  const fr=announceLang==='fr';
+  const base=renderTemplate('end',{});
+  if(!base)return null;
+  const runningExams=exams.filter(e=>e.status==='running');
+  const totalTimers=runningExams.reduce((n,e)=>n+e.timers.length,0);
+  const anyExtra=endBatch.some(({timer})=>timer.label!=='Principal');
+  if(endBatch.length>=totalTimers&&!anyExtra)return base;
+  const groups={};
+  endBatch.forEach(({exam,timer})=>{if(!groups[exam.title])groups[exam.title]=[];if(timer.label!=='Principal')groups[exam.title].push(timer.label);});
+  const allExamsCovered=Object.keys(groups).length>=runningExams.length;
+  const parts=Object.entries(groups).map(([title,extras])=>{
+    if(allExamsCovered)return extras.length?(fr?`temps supplémentaire de ${joinList(extras,fr)}`:`additional time of ${joinList(extras,fr)}`):null;
+    if(extras.length)return fr?`${title}, temps supplémentaire de ${joinList(extras,fr)}`:`${title}, additional time of ${joinList(extras,fr)}`;
+    return title;
+  }).filter(Boolean);
+  if(parts.length===0)return base;
+  const prefix=fr?(parts.every(p=>p.startsWith('temps'))?`Pour le ${joinList(parts,fr)} : `:`Pour ${joinList(parts,fr)} : `):`For ${joinList(parts,fr)}: `;
+  return prefix+base;
+}
+
+// Helper: fire IB announcements for a given event across a list of exams
+function ibAnnounce(examList, event, interrupt=false, examIds=null){
+  if(audioMode!=='voice')return;
+  const now=new Date();
+  const allRunning=exams.filter(e=>e.status==='running'||e.status==='reading');
+  const groups=ibGroupAnnouncements(examList, event, now);
+  const ids=examIds||examList.map(e=>e.id);
+  groups.forEach(group=>{
+    const text=ibBuildAnnouncement(group, allRunning);
+    const tIds=group.timers&&group.timers.length>0?group.timers.map(t=>t.id):null;
+    announce(text,{interrupt,examIds:ids,timerIds:tIds});
   });
 }
 
