@@ -1055,9 +1055,12 @@ function makeSVG(r,tid,strokeColor){
 function timerState(t){if(t.done)return'done';if(t.left<=alertSecs)return'warning';if(t.left<=ALERT_30)return'near30';return'normal';}
 function setArc(tid,left,total,state,r){
   const el=document.getElementById('arc-'+tid);if(!el)return;
-  const circ=2*Math.PI*r;
-  el.style.strokeDashoffset=(circ*Math.max(0,1-(total>0?left/total:0))).toFixed(2);
-  // Same colors as t-display text
+  // Use the scaled radius that matches the actual SVG circle drawn by makeSVG
+  const scaledR=Math.round(r*_colScale);
+  const circ=2*Math.PI*scaledR;
+  const pct=total>0?Math.max(0,Math.min(1,left/total)):0;
+  el.style.strokeDasharray=circ.toFixed(2);
+  el.style.strokeDashoffset=(circ*(1-pct)).toFixed(2);
   el.style.stroke={normal:'#1a1a18',near30:'#1a5abf',warning:'#c0392b',done:'#e8e6e0'}[state]||'#1a1a18';
 }
 
@@ -1743,7 +1746,7 @@ function colHTML(exam){
         <div style="min-width:0;flex:1">
           <div class="t-label">${t2.label}</div>
           <div class="t-display greyed">${fmtTime(t2.left)}</div>
-          <div class="t-total">${fmtHuman(t2.total)}</div>
+          <div class="t-total" id="total-${t2.id}">${fmtHuman(t2.total)}</div>
         </div>
       </div>`).join('');
     inner=`${readingPreview}
@@ -1761,7 +1764,7 @@ function colHTML(exam){
         <div style="min-width:0;flex:1">
           <div class="t-label">${t2.label}</div>
           <div class="t-display greyed" id="disp-${t2.id}">${fmtTime(t2.left)}</div>
-          <div class="t-total">${fmtHuman(t2.total)}</div>
+          <div class="t-total" id="total-${t2.id}">${fmtHuman(t2.total)}</div>
         </div>
       </div>`).join('');
     inner=`<div class="col-reading-phase" id="colread-${exam.id}">
@@ -1777,7 +1780,7 @@ function colHTML(exam){
         <div style="min-width:0;flex:1">
           <div class="t-label" id="lbl-${t2.id}">${t2.label}</div>
           <div class="t-display" id="disp-${t2.id}">${fmtTime(t2.left)}</div>
-          <div class="t-total">${fmtHuman(t2.total)}</div>
+          <div class="t-total" id="total-${t2.id}">${fmtHuman(t2.total)}</div>
           ${milestonesHTML(t2)}
         </div>
       </div>`).join('');
@@ -1831,6 +1834,9 @@ function refreshTimers(){
         const blk=document.getElementById('blk-'+timer.id);if(blk)blk.className='timer-block'+(timer.done?' done-blk':'');
         const disp=document.getElementById('disp-'+timer.id);
         if(disp){disp.style.color='';disp.className='t-display'+(state==='warning'?' warning':state==='near30'?' near30':'')+(timer.done?' done-txt':'');disp.textContent=fmtTime(timer.left);}
+        // Update total display (changes when adjustExamTime is called)
+        const totalEl=document.getElementById('total-'+timer.id);
+        if(totalEl)totalEl.textContent=fmtHuman(timer.total);
         const lbl=document.getElementById('lbl-'+timer.id);
         if(lbl)lbl.innerHTML=timer.label+(timer.done?`<span class="done-badge">${t('done')}</span>`:'');
         setArc(timer.id,timer.left,timer.total,state,timer.r);
@@ -1996,8 +2002,9 @@ function adjustExamTime(examId,d){
   exam.timers.forEach(t=>{
     if(t.done)return;
     const scaled=Math.round(d*t.ratio);
+    // Change both left and total — this shifts the endpoint while preserving elapsed time
     t.left=Math.max(0,t.left+scaled);
-    if(d>0)t.total+=scaled;
+    t.total=Math.max(t.left,t.total+scaled);
     if(t.left>alertSecs)t.alerted=false;
     if(t.left>ALERT_30)t.alerted30=false;
   });
@@ -2242,8 +2249,8 @@ function adjTimer(tid,d){
   let found=null;exams.forEach(exam=>exam.timers.forEach(t=>{if(t.id===tid)found={exam,t};}));
   if(!found||found.t.done||found.exam.status!=='running')return;
   const t=found.t;
+  // Only change left — total stays fixed so circle shows proportion of total exam time used
   t.left=Math.max(0,t.left+d);
-  if(d>0)t.total+=d;
   if(t.left>alertSecs)t.alerted=false;
   if(t.left>ALERT_30)t.alerted30=false;
   const liveEl=document.getElementById('adj-live-'+tid);if(liveEl)liveEl.textContent=fmtTime(t.left);
@@ -2453,8 +2460,7 @@ function releaseWakeLock(){
 function confirmQuit(){
   const existing=document.getElementById('quit-confirm-overlay');
   if(existing){existing.remove();return;}
-  const overlay=document.createElement('div');
-  overlay.id='quit-confirm-overlay';
+  const overlay=document.createElement('div');overlay.id='quit-confirm-overlay';
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
   const box=document.createElement('div');
   box.style.cssText='background:#fff;border-radius:16px;padding:24px;max-width:320px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)';
