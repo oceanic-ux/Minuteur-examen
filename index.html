@@ -378,6 +378,8 @@ var UI={
     readingName:'Temps de lecture',
     readingSub:(v)=>`${v} minute${v>1?'s':''} avant le début`,
     examsSection:'Examens',
+    ibPickerDate:'Depuis DD/MM',ibPickerDateTo:'Jusqu\'à DD/MM',ibPickerSearch:'Matière, épreuve…',ibPickerAllLevels:'Niveaux',
+    ibPickerManagerBtn:'📋 Programme IB',
     addExam:'Ajouter un examen',
     alertsSection:'Alertes sonores',
     alert30Label:'Première alerte avant la fin',
@@ -431,6 +433,8 @@ var UI={
     readingName:'Reading time',
     readingSub:(v)=>`${v} minute${v>1?'s':''} before start`,
     examsSection:'Exams',
+    ibPickerDate:'From DD/MM',ibPickerDateTo:'To DD/MM',ibPickerSearch:'Subject, paper…',ibPickerAllLevels:'Levels',
+    ibPickerManagerBtn:'📋 IB Schedule',
     addExam:'Add an exam',
     alertsSection:'Sound alerts',
     alert30Label:'First alert before end',
@@ -889,22 +893,24 @@ function ibText(type, event, lang, exam, now, timer){
 // Returns array of {text, exams[], timerLabel} where timerLabel is null for exam-level events.
 function ibGroupAnnouncements(examList, event, now){
   const groups={}; // text → {exams:[], timerLabel, timerIds:[]}
-  const durationEvents=['readingEnd']; // events where timer duration matters
+  // For duration events (readingEnd, examStart), use only the Principal timer
+  // so we don't generate separate announcements for extra-time timers
+  const durationEvents=['readingEnd','examStart'];
 
   examList.forEach(exam=>{
     if(durationEvents.includes(event)){
-      // Fire once per active timer so each duration is announced correctly
-      exam.timers.filter(t=>!t.done).forEach(timer=>{
-        const text=ibText(exam.ibType||'ns', event, announceLang, exam, now, timer);
-        if(!text)return;
-        const key=text+'||'+timer.label; // group by text+timerLabel
-        if(!groups[key])groups[key]={text,items:[],timerLabel:timer.label};
-        groups[key].items.push({exam,timer});
-      });
+      // Use Principal timer only for duration — fall back to first active timer
+      const timer=exam.timers.find(t=>t.label==='Principal'&&!t.done)
+        ||exam.timers.find(t=>!t.done)
+        ||exam.timers[0];
+      const text=ibText(exam.ibType||'ns', event, announceLang, exam, now, timer);
+      if(!text)return;
+      if(!groups[text])groups[text]={text,items:[]};
+      groups[text].items.push({exam,timer:null}); // timer:null = exam-level grouping
     } else {
       const text=ibText(exam.ibType||'ns', event, announceLang, exam, now);
       if(!text)return;
-      if(!groups[text])groups[text]={text,items:[],timerLabel:null};
+      if(!groups[text])groups[text]={text,items:[]};
       groups[text].items.push({exam,timer:null});
     }
   });
@@ -912,32 +918,17 @@ function ibGroupAnnouncements(examList, event, now){
   return Object.values(groups).map(g=>({
     text:g.text,
     exams:[...new Set(g.items.map(i=>i.exam))],
-    timers:g.items.map(i=>i.timer).filter(Boolean),
-    timerLabel:g.timerLabel
+    timers:[],
+    timerLabel:null
   }));
 }
 
 function ibBuildAnnouncement(group, allRunningExams){
   const fr=announceLang==='fr';
-  const allTimers=allRunningExams.flatMap(e=>e.timers.filter(t=>!t.done));
-  // If this group covers all active timers → no prefix needed
-  const groupTimerCount=group.timers.length||group.exams.length;
-  const totalActive=group.timerLabel
-    ? allTimers.filter(t=>t.label===group.timerLabel).length // same timer type across exams
-    : allRunningExams.length;
-
-  if(groupTimerCount>=totalActive) return group.text;
-
-  // Build prefix with exam names and extra-time label if applicable
-  const parts=group.exams.map(e=>{
-    if(group.timerLabel&&group.timerLabel!=='Principal'){
-      return fr
-        ?`${e.title||('Épreuve '+e.id)}, temps supplémentaire de ${fmtSpokenLabel(group.timerLabel,true)}`
-        :`${e.title||('Exam '+e.id)}, additional time of ${fmtSpokenLabel(group.timerLabel,false)}`;
-    }
-    return e.title||('Épreuve '+e.id);
-  });
-  const list=joinList(parts,fr);
+  // If this group covers all running exams → no prefix needed
+  if(group.exams.length>=allRunningExams.length) return group.text;
+  // Prefix with exam names
+  const list=joinList(group.exams.map(e=>e.title||(fr?'Épreuve '+e.id:'Exam '+e.id)),fr);
   return (fr?`Pour ${list} : `:`For ${list}: `)+group.text;
 }
 
@@ -983,6 +974,21 @@ function renderExamList(){
       <div class="field" style="margin-bottom:10px">
         <label>${t('titleLabel')}</label>
         <input type="text" id="inp-title-${def.id}" placeholder="${t('titlePlaceholder')}" value="${escHtml(def.title)}" oninput="examDefs.find(e=>e.id===${def.id}).title=this.value">
+        <div id="ib-picker-${def.id}" class="ib-picker" style="margin-top:6px">
+          <div class="ib-picker-filters" id="ib-pf-${def.id}">
+            <input type="text" id="ib-pf-date-${def.id}" placeholder="${t('ibPickerDate')}" value="${escHtml(def._ibDateFrom||ibDefaultDateFrom())}" oninput="ibPickerFilter(${def.id})" onfocus="ibPickerFilter(${def.id});ibShowDatePicker(this,${def.id},'from')" style="min-width:70px;max-width:90px;cursor:pointer">
+            <input type="text" id="ib-pf-date2-${def.id}" placeholder="${t('ibPickerDateTo')}" value="${escHtml(def._ibDateTo||ibDefaultDateTo())}" oninput="ibPickerFilter(${def.id})" onfocus="ibPickerFilter(${def.id});ibShowDatePicker(this,${def.id},'to')" style="min-width:70px;max-width:90px;cursor:pointer">
+            <input type="text" id="ib-pf-q-${def.id}" placeholder="${t('ibPickerSearch')}" value="${escHtml(def._ibQuery||'')}" oninput="ibPickerFilter(${def.id})" onfocus="ibPickerFilter(${def.id})" style="min-width:100px;flex:2">
+            <select id="ib-pf-lvl-${def.id}" onchange="ibPickerFilter(${def.id})" onfocus="ibPickerFilter(${def.id})" style="min-width:60px;max-width:70px">
+              <option value="">${t('ibPickerAllLevels')}</option>
+              <option value="NM">NM/SL</option>
+              <option value="NS">NS/HL</option>
+              <option value="NM/NS">NM+NS</option>
+            </select>
+          </div>
+          <div class="ib-results" id="ib-res-${def.id}"></div>
+          ${def._ibSelected?`<div class="ib-selected-tag"><span>✓ ${escHtml(def._ibSelected)}</span><button onclick="ibClearSelection(${def.id})" style="background:none;border:none;color:#888;cursor:pointer;font-size:14px;padding:0 2px">×</button></div>`:''}
+        </div>
       </div>
       <div class="time-row">
         <div class="field"><label>${t('hoursLabel')}</label><input type="number" id="inp-h-${def.id}" min="0" max="23" value="${def._h!==undefined?def._h:'0'}" oninput="checkStart()"></div>
@@ -1099,6 +1105,22 @@ function populateVoices(){
 }
 if(window.speechSynthesis){window.speechSynthesis.onvoiceschanged=populateVoices;populateVoices();}
 
+// Sanitize text for TTS — spell out abbreviations that engines mispronounce
+function sanitizeForTTS(text, fr){
+  if(!text)return text;
+  // Level abbreviations — insert non-breaking spaces so TTS spells them out
+  // Both FR (NM/NS) and EN (SL/HL) variants
+  // Use SSML-style letter-by-letter: "N M" / "N S" / "S L" / "H L"
+  text=text
+    .replace(/\bNM\/NS\b/g, fr?'N M, N S':'S L, H L')
+    .replace(/\bNM\b/g,     fr?'N M':'S L')
+    .replace(/\bNS\b/g,     fr?'N S':'H L')
+    .replace(/\bSL\/HL\b/g, fr?'N M, N S':'S L, H L')
+    .replace(/\bSL\b/g,     fr?'N M':'S L')
+    .replace(/\bHL\b/g,     fr?'N S':'H L');
+  return text;
+}
+
 function splitIntoChunks(text,maxLen=200){
   const sentences=text.match(/[^.!?]+[.!?]+[\s]*/g)||[text];
   const chunks=[];let current='';
@@ -1173,6 +1195,7 @@ document.addEventListener('visibilitychange',()=>{
 
 function announce(text,{interrupt=false,examIds=null,timerIds=null}={}){
   if(audioMode!=='voice'||!window.speechSynthesis||!text)return;
+  text=sanitizeForTTS(text, announceLang==='fr');
   const voice=selectedVoice||(()=>{
     const vv=window.speechSynthesis.getVoices();
     if(announceLang==='en'){
@@ -1358,6 +1381,796 @@ function getTemplate(event){
   const lang=announceLang;
   return (_customTemplates[lang]&&_customTemplates[lang][event])||TMPL_DEFAULTS[lang][event]||[];
 }
+// ══ IB PROGRAMME 2027 ══════════════════════════════════════════════════════
+
+// ── Lookup tables (same as examens_IB_2027) ──
+const IB_TYPES_FR=['Non structuré','Structuré','Semi-structuré','QCM','QCM + Structuré','Compréhension écrite','Compréhension orale'];
+const IB_TYPES_EN=['Unstructured','Structured','Semi-structured','MCQ','MCQ + Structured','Reading comprehension','Listening comprehension'];
+const IB_LEVELS_FR=['NM','NS','NM/NS'];
+const IB_LEVELS_EN=['SL','HL','SL/HL'];
+const IB_SESSIONS_FR=['Matin','Après-midi',''];
+const IB_SESSIONS_EN=['Morning','Afternoon',''];
+const IB_GROUPS_FR=['Individus et sociétés','Sciences','Études en langue et littérature / Acquisition de langues','Mathématiques','Arts','Matières interdisciplinaires','PPE / PPO',''];
+const IB_GROUPS_EN=['Individuals and societies','Sciences','Studies in lang. & lit. / Language acquisition','Mathematics','The arts','Interdisciplinary','SBS / CP',''];
+const IB_GRP_COLOR={'Individus et sociétés':'#4caf50','Sciences':'#ff9800','Études en langue et littérature / Acquisition de langues':'#2196f3','Mathématiques':'#f44336','Arts':'#f0c040','Matières interdisciplinaires':'#9c27b0','PPE / PPO':'#888','Individuals and societies':'#4caf50','Studies in lang. & lit. / Language acquisition':'#2196f3','Mathematics':'#f44336','The arts':'#f0c040','Interdisciplinary':'#9c27b0','SBS / CP':'#888','':'#ccc'};
+const IB_LEVEL_EN2FR={'SL':'NM','HL':'NS','SL/HL':'NM/NS','NM':'NM','NS':'NS','NM/NS':'NM/NS'};
+const IB_LEVEL_FR2EN={'NM':'SL','NS':'HL','NM/NS':'SL/HL','SL':'SL','HL':'HL','SL/HL':'SL/HL'};
+
+// ── IB type → minuteur ibType mapping ──
+function ibTypeToTimerType(typeFR){
+  if(!typeFR)return'ns';
+  const t=typeFR.trim();
+  if(t==='QCM')return'mcq';
+  if(t==='Compréhension orale')return'acq';
+  if(t==='Non structuré')return'ns';
+  // Structuré, Semi-structuré, QCM + Structuré, Compréhension écrite → ss (with reading)
+  return'ss';
+}
+// IB type → should have reading time?
+function ibTypeHasReading(typeFR){
+  if(!typeFR)return true;
+  const t=typeFR.trim();
+  if(t==='QCM')return false;
+  return true;
+}
+
+// ── RAW IB data (from examens_IB_2027) ──
+// Format: [dateFR, dateEN, sessFR, sessEN, mFR, mEN, lvl, paper, grpFR, grpEN, typeFR, typeEN, duree, notesFR, notesEN]
+const IB_RAW_DEFAULT=[
+['23/04/2027','Friday 23 April','Après-midi','Afternoon','Programmes propres aux établissements','School-based syllabus','NM','1','PPE / PPO','SBS / CP','Structuré','Structured','','Épreuve 1 PPE','SBS paper 1'],
+['23/04/2027','Friday 23 April','Après-midi','Afternoon','Langue et culture','Language & culture','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['26/04/2027','Monday 26 April','Matin','Morning','Programmes propres aux établissements','School-based syllabus','NM','2','PPE / PPO','SBS / CP','Structuré','Structured','','Épreuve 2 PPE','SBS paper 2'],
+['26/04/2027','Monday 26 April','Matin','Morning','Langue et culture','Language & culture','NM','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['26/04/2027','Monday 26 April','Après-midi','Afternoon','Langue A : littérature','Language A Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['26/04/2027','Monday 26 April','Après-midi','Afternoon','Langue A : littérature','Language A Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['26/04/2027','Monday 26 April','Après-midi','Afternoon','Langue A : langue et littérature','Language A Language & Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['26/04/2027','Monday 26 April','Après-midi','Afternoon','Langue A : langue et littérature','Language A Language & Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['27/04/2027','Tuesday 27 April','Matin','Morning','Langue A : littérature','Language A Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['27/04/2027','Tuesday 27 April','Matin','Morning','Langue A : langue et littérature','Language A Language & Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['27/04/2027','Tuesday 27 April','Après-midi','Afternoon','Gestion des entreprises','Business management','NM/NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['27/04/2027','Tuesday 27 April','Après-midi','Afternoon','Gestion des entreprises','Business management','NS','3','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','75','',''],
+['28/04/2027','Wednesday 28 April','Matin','Morning','Gestion des entreprises','Business management','NS','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','105','',''],
+['28/04/2027','Wednesday 28 April','Matin','Morning','Gestion des entreprises','Business management','NM','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['28/04/2027','Wednesday 28 April','Après-midi','Afternoon','Physique','Physics','NS','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','120','',''],
+['28/04/2027','Wednesday 28 April','Après-midi','Afternoon','Physique','Physics','NM','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','90','',''],
+['28/04/2027','Wednesday 28 April','Après-midi','Afternoon','Science du sport, de l\'exercice et de la santé','Sports, exercise & health science','NS','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','105','',''],
+['28/04/2027','Wednesday 28 April','Après-midi','Afternoon','Science du sport, de l\'exercice et de la santé','Sports, exercise & health science','NM','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','90','',''],
+['29/04/2027','Thursday 29 April','Matin','Morning','Physique','Physics','NS','2','Sciences','Sciences','Structuré','Structured','150','',''],
+['29/04/2027','Thursday 29 April','Matin','Morning','Physique','Physics','NM','2','Sciences','Sciences','Structuré','Structured','90','',''],
+['29/04/2027','Thursday 29 April','Matin','Morning','Science du sport, de l\'exercice et de la santé','Sports, exercise & health science','NS','2','Sciences','Sciences','Structuré','Structured','150','',''],
+['29/04/2027','Thursday 29 April','Matin','Morning','Science du sport, de l\'exercice et de la santé','Sports, exercise & health science','NM','2','Sciences','Sciences','Structuré','Structured','90','',''],
+['29/04/2027','Thursday 29 April','Après-midi','Afternoon','Psychologie','Psychology','NM/NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['29/04/2027','Thursday 29 April','Après-midi','Afternoon','Psychologie','Psychology','NM/NS','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['30/04/2027','Friday 30 April','Matin','Morning','Psychologie','Psychology','NS','3','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','105','',''],
+['30/04/2027','Friday 30 April','Après-midi','Afternoon','Informatique','Computer science','NS','1','Sciences','Sciences','Non structuré','Unstructured','120','',''],
+['30/04/2027','Friday 30 April','Après-midi','Afternoon','Informatique','Computer science','NM','1','Sciences','Sciences','Non structuré','Unstructured','75','',''],
+['30/04/2027','Friday 30 April','Après-midi','Afternoon','Systèmes de l\'environnement et sociétés','Environmental systems & societies','NS','1','Sciences','Sciences','Structuré','Structured','120','',''],
+['30/04/2027','Friday 30 April','Après-midi','Afternoon','Systèmes de l\'environnement et sociétés','Environmental systems & societies','NM','1','Sciences','Sciences','Structuré','Structured','60','',''],
+['03/05/2027','Monday 3 May','Matin','Morning','Informatique','Computer science','NS','2','Sciences','Sciences','Non structuré','Unstructured','120','',''],
+['03/05/2027','Monday 3 May','Matin','Morning','Informatique','Computer science','NM','2','Sciences','Sciences','Non structuré','Unstructured','75','',''],
+['03/05/2027','Monday 3 May','Matin','Morning','Systèmes de l\'environnement et sociétés','Environmental systems & societies','NS','2','Sciences','Sciences','Structuré','Structured','150','',''],
+['03/05/2027','Monday 3 May','Matin','Morning','Systèmes de l\'environnement et sociétés','Environmental systems & societies','NM','2','Sciences','Sciences','Structuré','Structured','120','',''],
+['03/05/2027','Monday 3 May','Après-midi','Afternoon','Histoire','History','NM/NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','60','',''],
+['03/05/2027','Monday 3 May','Après-midi','Afternoon','Histoire','History','NM/NS','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['04/05/2027','Tuesday 4 May','Matin','Morning','Histoire','History','NS','3','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','150','',''],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Langue B','Language B','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Langue B','Language B','NS','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Langue B','Language B','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Langue B','Language B','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Langue ab initio','Language ab initio','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','60','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Langue ab initio','Language ab initio','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Latin','Latin','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','120','',''],
+['04/05/2027','Tuesday 4 May','Après-midi','Afternoon','Latin','Latin','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['05/05/2027','Wednesday 5 May','Matin','Morning','Langue B','Language B','NS','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','60','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['05/05/2027','Wednesday 5 May','Matin','Morning','Langue B','Language B','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['05/05/2027','Wednesday 5 May','Matin','Morning','Langue ab initio','Language ab initio','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','Sauf anglais, espagnol, français','Except English, French & Spanish'],
+['05/05/2027','Wednesday 5 May','Matin','Morning','Latin','Latin','NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['05/05/2027','Wednesday 5 May','Matin','Morning','Latin','Latin','NM','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['05/05/2027','Wednesday 5 May','Après-midi','Afternoon','Chimie','Chemistry','NS','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','120','',''],
+['05/05/2027','Wednesday 5 May','Après-midi','Afternoon','Chimie','Chemistry','NM','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','90','',''],
+['05/05/2027','Wednesday 5 May','Après-midi','Afternoon','Technologie du design','Design technology','NS','1','Sciences','Sciences','QCM','MCQ','90','',''],
+['05/05/2027','Wednesday 5 May','Après-midi','Afternoon','Technologie du design','Design technology','NM','1','Sciences','Sciences','QCM','MCQ','60','',''],
+['06/05/2027','Thursday 6 May','Matin','Morning','Chimie','Chemistry','NS','2','Sciences','Sciences','Structuré','Structured','150','',''],
+['06/05/2027','Thursday 6 May','Matin','Morning','Chimie','Chemistry','NM','2','Sciences','Sciences','Structuré','Structured','90','',''],
+['06/05/2027','Thursday 6 May','Matin','Morning','Technologie du design','Design technology','NS','2','Sciences','Sciences','Structuré','Structured','150','',''],
+['06/05/2027','Thursday 6 May','Matin','Morning','Technologie du design','Design technology','NM','2','Sciences','Sciences','Structuré','Structured','90','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais A : littérature','English A Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais A : littérature','English A Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais A : langue et littérature','English A Language & Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais A : langue et littérature','English A Language & Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais B','English B','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais B','English B','NS','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais B','English B','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais B','English B','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais ab initio','English ab initio','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','60','',''],
+['06/05/2027','Thursday 6 May','Après-midi','Afternoon','Anglais ab initio','English ab initio','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['07/05/2027','Friday 7 May','Matin','Morning','Anglais A : littérature','English A Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','',''],
+['07/05/2027','Friday 7 May','Matin','Morning','Anglais A : langue et littérature','English A Language & Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','',''],
+['07/05/2027','Friday 7 May','Matin','Morning','Anglais B','English B','NS','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','60','',''],
+['07/05/2027','Friday 7 May','Matin','Morning','Anglais B','English B','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','',''],
+['07/05/2027','Friday 7 May','Matin','Morning','Anglais ab initio','English ab initio','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','',''],
+['07/05/2027','Friday 7 May','Matin','Morning','Littérature et représentation théâtrale','Literature & performance','NM','1','Arts','The arts','Non structuré','Unstructured','105','',''],
+['07/05/2027','Friday 7 May','Après-midi','Afternoon','Géographie','Geography','NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','135','',''],
+['07/05/2027','Friday 7 May','Après-midi','Afternoon','Géographie','Geography','NM','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['07/05/2027','Friday 7 May','Après-midi','Afternoon','Philosophie','Philosophy','NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','150','',''],
+['07/05/2027','Friday 7 May','Après-midi','Afternoon','Philosophie','Philosophy','NM','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','105','',''],
+['07/05/2027','Friday 7 May','Après-midi','Afternoon','Anthropologie sociale et culturelle','Social & cultural anthropology','NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','120','',''],
+['07/05/2027','Friday 7 May','Après-midi','Afternoon','Anthropologie sociale et culturelle','Social & cultural anthropology','NM','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['10/05/2027','Monday 10 May','Matin','Morning','Géographie','Geography','NM/NS','2','Individus et sociétés','Individuals and societies','Structuré','Structured','75','',''],
+['10/05/2027','Monday 10 May','Matin','Morning','Géographie','Geography','NS','3','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','60','',''],
+['10/05/2027','Monday 10 May','Matin','Morning','Philosophie','Philosophy','NM/NS','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','60','',''],
+['10/05/2027','Monday 10 May','Matin','Morning','Philosophie','Philosophy','NS','3','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','75','',''],
+['10/05/2027','Monday 10 May','Matin','Morning','Anthropologie sociale et culturelle','Social & cultural anthropology','NS','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','150','',''],
+['10/05/2027','Monday 10 May','Matin','Morning','Anthropologie sociale et culturelle','Social & cultural anthropology','NM','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['10/05/2027','Monday 10 May','Après-midi','Afternoon','Biologie','Biology','NS','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','120','',''],
+['10/05/2027','Monday 10 May','Après-midi','Afternoon','Biologie','Biology','NM','1 (1a et 1b)','Sciences','Sciences','QCM + Structuré','MCQ + Structured','90','',''],
+['11/05/2027','Tuesday 11 May','Matin','Morning','Biologie','Biology','NS','2','Sciences','Sciences','Structuré','Structured','150','',''],
+['11/05/2027','Tuesday 11 May','Matin','Morning','Biologie','Biology','NM','2','Sciences','Sciences','Structuré','Structured','90','',''],
+['11/05/2027','Tuesday 11 May','Après-midi','Afternoon','Économie','Economics','NM/NS','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','105','',''],
+['11/05/2027','Tuesday 11 May','Après-midi','Afternoon','Religions du monde','World religions','NM','1','Individus et sociétés','Individuals and societies','Structuré','Structured','75','',''],
+['12/05/2027','Wednesday 12 May','Matin','Morning','Économie','Economics','NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','75','',''],
+['12/05/2027','Wednesday 12 May','Matin','Morning','Économie','Economics','NS','3','Individus et sociétés','Individuals and societies','Structuré','Structured','105','',''],
+['12/05/2027','Wednesday 12 May','Matin','Morning','Économie','Economics','NM','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','75','',''],
+['12/05/2027','Wednesday 12 May','Matin','Morning','Religions du monde','World religions','NM','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Grec classique','Classical Greek','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','120','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Grec classique','Classical Greek','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol A : littérature','Spanish A Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol A : littérature','Spanish A Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol A : langue et littérature','Spanish A Language & Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol A : langue et littérature','Spanish A Language & Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol B','Spanish B','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol B','Spanish B','NS','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol B','Spanish B','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol B','Spanish B','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol ab initio','Spanish ab initio','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','60','',''],
+['12/05/2027','Wednesday 12 May','Après-midi','Afternoon','Espagnol ab initio','Spanish ab initio','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['13/05/2027','Thursday 13 May','Matin','Morning','Grec classique','Classical Greek','NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['13/05/2027','Thursday 13 May','Matin','Morning','Grec classique','Classical Greek','NM','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['13/05/2027','Thursday 13 May','Matin','Morning','Espagnol A : littérature','Spanish A Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','',''],
+['13/05/2027','Thursday 13 May','Matin','Morning','Espagnol A : langue et littérature','Spanish A Language & Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','',''],
+['13/05/2027','Thursday 13 May','Matin','Morning','Espagnol B','Spanish B','NS','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','60','',''],
+['13/05/2027','Thursday 13 May','Matin','Morning','Espagnol B','Spanish B','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','',''],
+['13/05/2027','Thursday 13 May','Matin','Morning','Espagnol ab initio','Spanish ab initio','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','',''],
+['13/05/2027','Thursday 13 May','Après-midi','Afternoon','Mathématiques : analyse et approches','Mathematics: analysis and approaches','NS','1','Mathématiques','Mathematics','Semi-structuré','Semi-structured','120','',''],
+['13/05/2027','Thursday 13 May','Après-midi','Afternoon','Mathématiques : analyse et approches','Mathematics: analysis and approaches','NM','1','Mathématiques','Mathematics','Semi-structuré','Semi-structured','90','',''],
+['13/05/2027','Thursday 13 May','Après-midi','Afternoon','Mathématiques : applications et interprétation','Mathematics: applications and interpretation','NS','1','Mathématiques','Mathematics','Structuré','Structured','120','',''],
+['13/05/2027','Thursday 13 May','Après-midi','Afternoon','Mathématiques : applications et interprétation','Mathematics: applications and interpretation','NM','1','Mathématiques','Mathematics','Structuré','Structured','90','',''],
+['14/05/2027','Friday 14 May','Matin','Morning','Mathématiques : analyse et approches','Mathematics: analysis and approaches','NS','2','Mathématiques','Mathematics','Semi-structuré','Semi-structured','120','',''],
+['14/05/2027','Friday 14 May','Matin','Morning','Mathématiques : analyse et approches','Mathematics: analysis and approaches','NM','2','Mathématiques','Mathematics','Semi-structuré','Semi-structured','90','',''],
+['14/05/2027','Friday 14 May','Matin','Morning','Mathématiques : applications et interprétation','Mathematics: applications and interpretation','NS','2','Mathématiques','Mathematics','Non structuré','Unstructured','120','',''],
+['14/05/2027','Friday 14 May','Matin','Morning','Mathématiques : applications et interprétation','Mathematics: applications and interpretation','NM','2','Mathématiques','Mathematics','Non structuré','Unstructured','90','',''],
+['14/05/2027','Friday 14 May','Après-midi','Afternoon','Société numérique','Digital Society','NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','135','',''],
+['14/05/2027','Friday 14 May','Après-midi','Afternoon','Société numérique','Digital Society','NM','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['14/05/2027','Friday 14 May','Après-midi','Afternoon','Politique mondiale','Global politics','NM/NS','1','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','75','',''],
+['14/05/2027','Friday 14 May','Après-midi','Afternoon','Politique mondiale','Global politics','NM/NS','2','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','105','',''],
+['17/05/2027','Monday 17 May','Matin','Morning','Société numérique','Digital Society','NM/NS','2','Individus et sociétés','Individuals and societies','Structuré','Structured','75','',''],
+['17/05/2027','Monday 17 May','Matin','Morning','Société numérique','Digital Society','NS','3','Individus et sociétés','Individuals and societies','Structuré','Structured','75','',''],
+['17/05/2027','Monday 17 May','Matin','Morning','Politique mondiale','Global politics','NS','3','Individus et sociétés','Individuals and societies','Non structuré','Unstructured','90','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français A : littérature','French A Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français A : littérature','French A Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français A : langue et littérature','French A Language & Literature','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','135','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français A : langue et littérature','French A Language & Literature','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français B','French B','NS','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','90','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français B','French B','NS','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français B','French B','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','75','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français B','French B','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français ab initio','French ab initio','NM','1','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','60','',''],
+['17/05/2027','Monday 17 May','Après-midi','Afternoon','Français ab initio','French ab initio','NM','2 – Compréhension écrite','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension écrite','Reading comprehension','60','',''],
+['18/05/2027','Tuesday 18 May','Matin','Morning','Français A : littérature','French A Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','',''],
+['18/05/2027','Tuesday 18 May','Matin','Morning','Français A : langue et littérature','French A Language & Literature','NM/NS','2','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Non structuré','Unstructured','105','',''],
+['18/05/2027','Tuesday 18 May','Matin','Morning','Français B','French B','NS','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','60','',''],
+['18/05/2027','Tuesday 18 May','Matin','Morning','Français B','French B','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','',''],
+['18/05/2027','Tuesday 18 May','Matin','Morning','Français ab initio','French ab initio','NM','2 – Compréhension orale','Études en langue et littérature / Acquisition de langues','Studies in lang. & lit. / Language acquisition','Compréhension orale','Listening comprehension','45','',''],
+['18/05/2027','Tuesday 18 May','Après-midi','Afternoon','Mathématiques : analyse et approches','Mathematics: analysis and approaches','NS','3','Mathématiques','Mathematics','Non structuré','Unstructured','75','',''],
+['18/05/2027','Tuesday 18 May','Après-midi','Afternoon','Mathématiques : applications et interprétation','Mathematics: applications and interpretation','NS','3','Mathématiques','Mathematics','Non structuré','Unstructured','75','',''],
+];
+
+function ibBuildRow(a){return{date:a[0],dateEN:a[1],sessFR:a[2],sessEN:a[3],mFR:a[4],mEN:a[5],lvl:a[6],paper:a[7],grpFR:a[8],grpEN:a[9],typeFR:a[10],typeEN:a[11],duree:a[12],notesFR:a[13],notesEN:a[14]};}
+
+// ── IB rows (editable, persisted in localStorage) ──
+let _ibRows=null;
+function ibGetRows(){
+  if(_ibRows)return _ibRows;
+  try{const s=localStorage.getItem('hl-ib-rows');if(s){_ibRows=JSON.parse(s);return _ibRows;}}catch{}
+  _ibRows=IB_RAW_DEFAULT.map(ibBuildRow);
+  return _ibRows;
+}
+function ibSaveRows(){try{localStorage.setItem('hl-ib-rows',JSON.stringify(_ibRows||[]));} catch{}}
+
+// ── Date helpers ──
+function ibParseDate(s){
+  if(!s||!s.trim())return null;
+  const m=s.trim().match(/^(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?/);
+  return m?{d:parseInt(m[1]),mo:parseInt(m[2]),yr:m[3]?parseInt(m[3]):null}:null;
+}
+function ibDateToInt(s){const p=ibParseDate(s);return p?((p.yr||0)*10000+p.mo*100+p.d):null;}
+function ibDefaultDateFrom(){const n=new Date();return String(n.getDate()).padStart(2,'0')+'/'+String(n.getMonth()+1).padStart(2,'0')+'/'+n.getFullYear();}
+function ibDefaultDateTo(){const n=new Date(Date.now()+7*86400000);return String(n.getDate()).padStart(2,'0')+'/'+String(n.getMonth()+1).padStart(2,'0')+'/'+n.getFullYear();}
+
+// ── Picker filter ──
+function ibPickerFilter(eid){
+  const def=examDefs.find(e=>e.id===eid);if(!def)return;
+  const dateFrom=document.getElementById('ib-pf-date-'+eid)?.value||'';
+  const dateTo=document.getElementById('ib-pf-date2-'+eid)?.value||'';
+  const q=(document.getElementById('ib-pf-q-'+eid)?.value||'').toLowerCase().trim();
+  const lvl=document.getElementById('ib-pf-lvl-'+eid)?.value||'';
+  def._ibDateFrom=dateFrom; def._ibDateTo=dateTo; def._ibQuery=q;
+
+  // Mark active
+  ['ib-pf-date-'+eid,'ib-pf-date2-'+eid,'ib-pf-q-'+eid,'ib-pf-lvl-'+eid].forEach(id=>{
+    const el=document.getElementById(id);if(!el)return;
+    el.classList.toggle('active',!!(el.value&&el.value.trim()));
+  });
+
+  const res=document.getElementById('ib-res-'+eid);if(!res)return;
+  const rows=ibGetRows();
+  const fromInt=ibDateToInt(dateFrom);
+  const toInt=ibDateToInt(dateTo);
+  const fr=announceLang==='fr'||uiLang==='fr';
+
+  const filtered=rows.filter(r=>{
+    const rd=ibDateToInt(r.date);
+    if(rd&&fromInt&&rd<fromInt)return false;
+    if(rd&&toInt&&rd>toInt)return false;
+    if(lvl&&r.lvl!==lvl)return false;
+    if(q){
+      const hay=(r.mFR+' '+r.mEN+' '+r.paper).toLowerCase();
+      if(!hay.includes(q))return false;
+    }
+    return true;
+  }).slice(0,30);
+
+  if(!filtered.length){
+    res.innerHTML='<div class="ib-result-empty">'+(fr?'Aucun résultat':'No results')+'</div>';
+    return;
+  }
+
+  res.innerHTML=filtered.map((r,i)=>{
+    const subj=fr?r.mFR:r.mEN;
+    const lvlDisp=fr?r.lvl:(IB_LEVEL_FR2EN[r.lvl]||r.lvl);
+    const dur=r.duree?(r.duree+' min'):'—';
+    return '<div class="ib-result-item" onclick="ibPickerSelect('+eid+','+rows.indexOf(r)+')">'
+      +'<span class="ib-result-date">'+r.date+'</span>'
+      +'<span class="ib-result-subject">'+escHtml(subj)+'</span>'
+      +'<span class="ib-result-paper">'+escHtml(r.paper)+'</span>'
+      +'<span class="ib-result-lvl">'+escHtml(lvlDisp)+'</span>'
+      +'<span class="ib-result-dur">'+dur+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+function ibPickerSelect(eid,rowIdx){
+  const def=examDefs.find(e=>e.id===eid);if(!def)return;
+  const rows=ibGetRows();
+  const r=rows[rowIdx];if(!r)return;
+  const fr=announceLang==='fr'||uiLang==='fr';
+
+  // Build title: Subject Paper Level
+  const subj=fr?r.mFR:r.mEN;
+  const lvlDisp=fr?r.lvl:(IB_LEVEL_FR2EN[r.lvl]||r.lvl);
+  const title=subj+' '+r.paper+' '+lvlDisp;
+
+  // Set minutes from duration
+  const mins=parseInt(r.duree)||0;
+
+  // Map IB type → timer ibType and reading
+  const ibType=ibTypeToTimerType(r.typeFR);
+  const hasReading=ibTypeHasReading(r.typeFR);
+
+  // Apply to examDef — set duration BEFORE renderExamList reads it back
+  // We must set _h/_m/_s AFTER renderExamList saves the DOM (which happens at render start)
+  // So we set title/ibType/readingOn now, re-render, then directly set the input values
+  def.title=title;
+  def.ibType=ibType;
+  def.readingOn=hasReading;
+  def._ibSelected=subj+' '+r.paper+' '+lvlDisp;
+
+  // Re-render (this will save old _m/_h/_s from DOM, then build new DOM with old values)
+  renderExamList();
+
+  // Now directly set the duration inputs to the IB exam duration
+  const inpH=document.getElementById('inp-h-'+eid);
+  const inpM=document.getElementById('inp-m-'+eid);
+  const inpS=document.getElementById('inp-s-'+eid);
+  if(inpH){inpH.value='0';def._h='0';}
+  if(inpM){inpM.value=String(mins);def._m=String(mins);}
+  if(inpS){inpS.value='0';def._s='0';}
+
+  checkStart();
+}
+
+function ibClearSelection(eid){
+  const def=examDefs.find(e=>e.id===eid);if(!def)return;
+  def._ibSelected=null;
+  renderExamList();
+}
+
+// ── IB Manager modal ──
+let _ibModalLang='fr';
+let _ibModalFilters={dateFrom:'',dateTo:'',q:'',lvl:''};
+
+function openIBManager(){
+  _ibModalLang=uiLang||'fr';
+  _ibSelected.clear();
+  ibUpdateSelBar();
+  document.getElementById('ib-modal-overlay').style.display='flex';
+  ibRenderModalFbar();
+  ibRenderModalTable();
+}
+function closeIBManager(){
+  document.getElementById('ib-modal-overlay').style.display='none';
+}
+function setIBLang(l){
+  _ibModalLang=l;
+  document.getElementById('ib-lang-fr').style.background=l==='fr'?'#3a7bd5':'#fff';
+  document.getElementById('ib-lang-fr').style.color=l==='fr'?'#fff':'#666';
+  document.getElementById('ib-lang-en').style.background=l==='en'?'#3a7bd5':'#fff';
+  document.getElementById('ib-lang-en').style.color=l==='en'?'#fff':'#666';
+  ibRenderModalFbar();ibRenderModalTable();
+}
+
+function ibModalFilter(key,val){
+  _ibModalFilters[key]=val;
+  ibRenderModalTable();
+}
+
+function ibRenderModalFbar(){
+  const fr=_ibModalLang==='fr';
+  const bar=document.getElementById('ib-modal-fbar');if(!bar)return;
+  const f=_ibModalFilters;
+  bar.innerHTML=''
+    +'<input type="text" value="'+escHtml(f.dateFrom||'')+'" placeholder="'+(fr?'Depuis DD/MM':'From DD/MM')+'" class="'+(f.dateFrom?'active':'')+'" oninput="ibModalFilter(\'dateFrom\',this.value)" style="max-width:110px">'
+    +'<input type="text" value="'+escHtml(f.dateTo||'')+'" placeholder="'+(fr?'Jusqu\'à DD/MM':'To DD/MM')+'" class="'+(f.dateTo?'active':'')+'" oninput="ibModalFilter(\'dateTo\',this.value)" style="max-width:110px">'
+    +'<input type="text" value="'+escHtml(f.q||'')+'" placeholder="'+(fr?'Matière, épreuve…':'Subject, paper…')+'" class="'+(f.q?'active':'')+'" oninput="ibModalFilter(\'q\',this.value)" style="min-width:140px">'
+    +'<select class="'+(f.lvl?'active':'')+'" onchange="ibModalFilter(\'lvl\',this.value)">'
+    +'<option value="">'+(fr?'Tous niveaux':'All levels')+'</option>'
+    +'<option value="NM"'+(f.lvl==='NM'?' selected':'')+'>NM/SL</option>'
+    +'<option value="NS"'+(f.lvl==='NS'?' selected':'')+'>NS/HL</option>'
+    +'<option value="NM/NS"'+(f.lvl==='NM/NS'?' selected':'')+'>NM+NS</option>'
+    +'</select>';
+}
+
+function ibFilteredRows(){
+  const f=_ibModalFilters;
+  const fromInt=ibDateToInt(f.dateFrom);
+  const toInt=ibDateToInt(f.dateTo);
+  const q=(f.q||'').toLowerCase().trim();
+  return ibGetRows().filter(r=>{
+    const rd=ibDateToInt(r.date);
+    if(rd&&fromInt&&rd<fromInt)return false;
+    if(rd&&toInt&&rd>toInt)return false;
+    if(f.lvl&&r.lvl!==f.lvl)return false;
+    if(q&&!(r.mFR+' '+r.mEN+' '+r.paper).toLowerCase().includes(q))return false;
+    return true;
+  });
+}
+
+// ── Multi-select state ──
+let _ibSelected=new Set(); // set of row indices (into ibGetRows()) that are checked
+
+function ibToggleRow(ri,checked){
+  if(checked)_ibSelected.add(ri);else _ibSelected.delete(ri);
+  ibUpdateSelBar();
+}
+function ibToggleAll(checked){
+  const vis=ibFilteredRows();
+  const rows=ibGetRows();
+  vis.forEach(r=>{const i=rows.indexOf(r);if(i>=0){if(checked)_ibSelected.add(i);else _ibSelected.delete(i);}});
+  ibUpdateSelBar();
+  ibRenderModalTable();
+}
+function ibUpdateSelBar(){
+  const bar=document.getElementById('ib-sel-bar');
+  const cnt=document.getElementById('ib-sel-count');
+  const n=_ibSelected.size;
+  if(bar)bar.style.display=n>0?'flex':'none';
+  if(cnt)cnt.textContent=n+(uiLang==='fr'?' sélectionnée(s)':' selected');
+}
+function ibClearSelection(){
+  _ibSelected.clear();
+  ibUpdateSelBar();
+  ibRenderModalTable();
+}
+function ibDeleteSelected(){
+  if(!_ibSelected.size)return;
+  const fr=uiLang==='fr';
+  if(!confirm(fr?'Supprimer '+_ibSelected.size+' ligne(s) ?':'Delete '+_ibSelected.size+' row(s)?'))return;
+  const rows=ibGetRows();
+  const sorted=[..._ibSelected].sort((a,b)=>b-a); // delete from end to preserve indices
+  sorted.forEach(i=>rows.splice(i,1));
+  _ibSelected.clear();
+  ibSaveRows();ibUpdateSelBar();ibRenderModalTable();
+}
+
+// ── Date picker ──
+let _ibDpTarget=null; // {input, eid, which:'from'|'to'}
+let _ibDpYear=2027;
+let _ibDpMonth=4; // 1-based, defaults to April 2027
+
+function ibShowDatePicker(input,eid,which){
+  // Remove any existing picker
+  ibHideDatePicker();
+
+  // Parse current value to set calendar month
+  const val=input.value;
+  const p=val.match(/^(\d{1,2})\/(\d{1,2})/);
+  const now=new Date();
+  _ibDpYear=p?now.getFullYear():now.getFullYear();
+  _ibDpMonth=p?parseInt(p[2]):(now.getMonth()+1);
+  // If parsed month, use it (assume 2027 session months: 4=April, 5=May)
+  if(p)_ibDpMonth=parseInt(p[2]);
+
+  _ibDpTarget={input,eid,which};
+
+  const dp=document.createElement('div');
+  dp.id='ib-datepicker';dp.className='ib-datepicker';
+  document.body.appendChild(dp);
+  ibRenderDatePicker();
+
+  // Position near input
+  const rect=input.getBoundingClientRect();
+  dp.style.top=(rect.bottom+4)+'px';
+  dp.style.left=rect.left+'px';
+  if(rect.left+dp.offsetWidth>window.innerWidth-10)
+    dp.style.left=Math.max(4,window.innerWidth-dp.offsetWidth-10)+'px';
+
+  // Close on outside click
+  setTimeout(()=>document.addEventListener('mousedown',ibDpOutside),0);
+}
+
+function ibDpOutside(e){
+  const dp=document.getElementById('ib-datepicker');
+  if(dp&&!dp.contains(e.target)&&e.target!==_ibDpTarget?.input){
+    ibHideDatePicker();
+  }
+}
+function ibHideDatePicker(){
+  const dp=document.getElementById('ib-datepicker');
+  if(dp)dp.remove();
+  document.removeEventListener('mousedown',ibDpOutside);
+  _ibDpTarget=null;
+}
+
+function ibRenderDatePicker(){
+  const dp=document.getElementById('ib-datepicker');if(!dp)return;
+  const fr=uiLang==='fr';
+  const months=fr?['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre']
+               :['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const dows=fr?['L','M','M','J','V','S','D']:['M','T','W','T','F','S','S'];
+
+  // Get exam dates for this month (to highlight)
+  const rows=ibGetRows();
+  const examDaysThisMonth=new Set();
+  rows.forEach(r=>{
+    const p=r.date&&r.date.match(/^(\d{1,2})\/(\d{1,2})/);
+    if(p&&parseInt(p[2])===_ibDpMonth)examDaysThisMonth.add(parseInt(p[1]));
+  });
+
+  // Parse selected date
+  let selDay=null,selMo=null;
+  if(_ibDpTarget){
+    const v=_ibDpTarget.input.value;
+    const p=v.match(/^(\d{1,2})\/(\d{1,2})/);
+    if(p){selDay=parseInt(p[1]);selMo=parseInt(p[2]);}
+  }
+  const today=new Date();
+  const todayD=today.getDate(),todayMo=today.getMonth()+1;
+
+  // Build calendar grid
+  const firstDay=new Date(_ibDpYear,_ibDpMonth-1,1).getDay(); // 0=Sun
+  const adjFirst=(firstDay+6)%7; // Monday=0
+  const daysInMonth=new Date(_ibDpYear,_ibDpMonth,0).getDate();
+  const daysInPrev=new Date(_ibDpYear,_ibDpMonth-1,0).getDate();
+
+  let cells='';
+  dows.forEach(d=>{cells+='<div class="ib-dp-dow">'+d+'</div>';});
+
+  // Prev month overflow
+  for(let i=0;i<adjFirst;i++){
+    const d=daysInPrev-adjFirst+1+i;
+    cells+='<div class="ib-dp-day other">'+d+'</div>';
+  }
+  // This month
+  for(let d=1;d<=daysInMonth;d++){
+    let cls='ib-dp-day';
+    if(d===todayD&&_ibDpMonth===todayMo)cls+=' today';
+    if(d===selDay&&_ibDpMonth===selMo)cls+=' selected';
+    if(examDaysThisMonth.has(d))cls+=' exam';
+    cells+='<div class="'+cls+'" onclick="ibDpSelectDay('+d+')">'+d+'</div>';
+  }
+  // Next month overflow
+  const total=adjFirst+daysInMonth;
+  const remaining=(7-total%7)%7;
+  for(let d=1;d<=remaining;d++)cells+='<div class="ib-dp-day other">'+d+'</div>';
+
+  // Shortcuts
+  const shortcuts=fr
+    ?[['Aujourd\'hui',0],['Demain',1],['+7j',7],['+14j',14]]
+    :[['Today',0],['Tomorrow',1],['+7d',7],['+14d',14]];
+  const shortBtns=shortcuts.map(([lbl,days])=>
+    '<button onclick="ibDpShortcut('+days+')">'+lbl+'</button>').join('');
+
+  dp.innerHTML=
+    '<div class="ib-dp-head">'
+    +'<button class="ib-dp-nav" onclick="ibDpNav(-1)">‹</button>'
+    +'<span class="ib-dp-title">'+months[_ibDpMonth-1]+' '+_ibDpYear+'</span>'
+    +'<button class="ib-dp-nav" onclick="ibDpNav(1)">›</button>'
+    +'</div>'
+    +'<div class="ib-dp-grid">'+cells+'</div>'
+    +'<div class="ib-dp-shortcuts">'+shortBtns+'</div>';
+}
+
+function ibDpNav(dir){
+  _ibDpMonth+=dir;
+  if(_ibDpMonth>12){_ibDpMonth=1;_ibDpYear++;}
+  if(_ibDpMonth<1){_ibDpMonth=12;_ibDpYear--;}
+  ibRenderDatePicker();
+  // Reposition
+  if(_ibDpTarget){
+    const dp=document.getElementById('ib-datepicker');
+    const rect=_ibDpTarget.input.getBoundingClientRect();
+    if(dp){dp.style.top=(rect.bottom+4)+'px';dp.style.left=rect.left+'px';}
+  }
+}
+
+function ibDpSelectDay(d){
+  if(!_ibDpTarget)return;
+  const val=String(d).padStart(2,'0')+'/'+String(_ibDpMonth).padStart(2,'0')+'/'+_ibDpYear;
+  _ibDpTarget.input.value=val;
+  if(_ibDpTarget.isPanel){
+    buildAddPanelFilter();
+  } else {
+    const eid=_ibDpTarget.eid;
+    const which=_ibDpTarget.which;
+    const def=examDefs.find(e=>e.id===eid);
+    if(def){if(which==='from')def._ibDateFrom=val;else def._ibDateTo=val;}
+    ibPickerFilter(eid);
+  }
+  ibHideDatePicker();
+}
+
+function ibDpShortcut(daysAhead){
+  if(!_ibDpTarget)return;
+  const d=new Date(Date.now()+daysAhead*86400000);
+  const val=String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+  _ibDpTarget.input.value=val;
+  _ibDpYear=d.getFullYear();_ibDpMonth=d.getMonth()+1;
+  ibRenderDatePicker();
+  if(_ibDpTarget.isPanel){
+    buildAddPanelFilter();
+  } else {
+    const eid=_ibDpTarget.eid,which=_ibDpTarget.which;
+    const def=examDefs.find(e=>e.id===eid);
+    if(def){if(which==='from')def._ibDateFrom=val;else def._ibDateTo=val;}
+    ibPickerFilter(eid);
+  }
+}
+
+function ibRenderModalTable(){
+  const fr=_ibModalLang==='fr';
+  const rows=ibGetRows();
+  const vis=ibFilteredRows();
+
+  const count=document.getElementById('ib-modal-count');
+  if(count)count.textContent=vis.length+' / '+rows.length+(fr?' épreuves':' papers');
+
+  // Head
+  const heads=fr
+    ?['Date','Session','Matière (FR)','Matière (EN)','Niveau','Épreuve','Groupe','Type','Durée (min)','Notes']
+    :['Date','Session','Subject (FR)','Subject (EN)','Level','Paper','Group','Type','Duration (min)','Notes'];
+  const allVisChecked=vis.length>0&&vis.every(r=>_ibSelected.has(rows.indexOf(r)));
+  document.getElementById('ib-tbl-head').innerHTML='<tr>'
+    +'<th class="cb-col"><input type="checkbox" '+(allVisChecked?'checked':'')
+    +' onchange="ibToggleAll(this.checked)" title="'+(fr?'Tout sélectionner':'Select all')+'"></th>'
+    +heads.map((h,i)=>'<th style="min-width:'+(i===2||i===3?130:i===6?110:i===7?100:70)+'px">'+h+'</th>').join('')
+    +'<th style="width:30px"></th></tr>';
+
+  // Body
+  const tOpts=(fr?IB_TYPES_FR:IB_TYPES_EN).map((t,i)=>({vFR:IB_TYPES_FR[i],label:t}));
+  const gOpts=(fr?IB_GROUPS_FR:IB_GROUPS_EN).map((g,i)=>({vFR:IB_GROUPS_FR[i],label:g}));
+  const sOpts=(fr?IB_SESSIONS_FR:IB_SESSIONS_EN).map((s,i)=>({vFR:IB_SESSIONS_FR[i],label:s}));
+
+  document.getElementById('ib-tbl-body').innerHTML=vis.map(r=>{
+    const ri=rows.indexOf(r);
+    const lvlOpts=IB_LEVELS_FR.map((lFR,li)=>{
+      const disp=fr?lFR:IB_LEVELS_EN[li];
+      return '<option value="'+lFR+'"'+(r.lvl===lFR?' selected':'')+'>'+disp+'</option>';
+    }).join('');
+    const c=IB_GRP_COLOR[r.grpFR]||'#ccc';
+    const isChecked=_ibSelected.has(ri);
+    return '<tr>'
+      +'<td class="cb-col"><input type="checkbox" '+(isChecked?'checked':'')+' onchange="ibToggleRow('+ri+',this.checked)"></td>'
+      +'<td><input value="'+escHtml(r.date)+'" onchange="ibRows_edit('+ri+',\'date\',this.value)" style="min-width:60px"></td>'
+      +'<td><select onchange="ibRows_syncSess('+ri+',this.value)">'+sOpts.map(o=>'<option value="'+escHtml(o.vFR)+'"'+(r.sessFR===o.vFR?' selected':'')+'>'+o.label+'</option>').join('')+'</select></td>'
+      +'<td><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:'+c+';margin:0 4px 0 6px;vertical-align:middle;flex-shrink:0"></span>'
+      +'<input value="'+escHtml(r.mFR)+'" onchange="ibRows_edit('+ri+',\'mFR\',this.value)" style="width:calc(100% - 20px);display:inline-block"></td>'
+      +'<td><input value="'+escHtml(r.mEN)+'" onchange="ibRows_edit('+ri+',\'mEN\',this.value)"></td>'
+      +'<td><select onchange="ibRows_editLvl('+ri+',this.value)">'+lvlOpts+'</select></td>'
+      +'<td><input value="'+escHtml(r.paper)+'" onchange="ibRows_edit('+ri+',\'paper\',this.value)"></td>'
+      +'<td><select onchange="ibRows_syncGrp('+ri+',this.value)">'+gOpts.map(o=>'<option value="'+escHtml(o.vFR)+'"'+(r.grpFR===o.vFR?' selected':'')+'>'+o.label+'</option>').join('')+'</select></td>'
+      +'<td><select onchange="ibRows_syncType('+ri+',this.value)">'+tOpts.map(o=>'<option value="'+escHtml(o.vFR)+'"'+(r.typeFR===o.vFR?' selected':'')+'>'+o.label+'</option>').join('')+'</select></td>'
+      +'<td><input type="number" value="'+escHtml(r.duree||'')+'" min="0" onchange="ibRows_edit('+ri+',\'duree\',this.value)" style="text-align:center;min-width:50px"></td>'
+      +'<td><input value="'+escHtml(fr?r.notesFR:r.notesEN)+'" onchange="ibRows_edit('+ri+','+(fr?'\'notesFR\'':'\'notesEN\'')+',this.value)"></td>'
+      +'<td><button onclick="ibRows_del('+ri+')" style="background:none;border:none;cursor:pointer;color:#aaa;font-size:14px;padding:4px 7px;border-radius:4px" title="Supprimer">✕</button></td>'
+      +'</tr>';
+  }).join('');
+}
+
+function ibRows_edit(ri,key,val){ibGetRows()[ri][key]=val;ibSaveRows();}
+function ibRows_editLvl(ri,vFR){ibGetRows()[ri].lvl=vFR;ibSaveRows();}
+function ibRows_syncSess(ri,vFR){const i=IB_SESSIONS_FR.indexOf(vFR);const r=ibGetRows()[ri];r.sessFR=vFR;r.sessEN=i>=0?IB_SESSIONS_EN[i]:vFR;ibSaveRows();}
+function ibRows_syncGrp(ri,vFR){const i=IB_GROUPS_FR.indexOf(vFR);const r=ibGetRows()[ri];r.grpFR=vFR;r.grpEN=i>=0?IB_GROUPS_EN[i]:vFR;ibSaveRows();}
+function ibRows_syncType(ri,vFR){const i=IB_TYPES_FR.indexOf(vFR);const r=ibGetRows()[ri];r.typeFR=vFR;r.typeEN=i>=0?IB_TYPES_EN[i]:vFR;ibSaveRows();ibRenderModalTable();}
+function ibRows_del(ri){if(!confirm(uiLang==='fr'?'Supprimer cette ligne ?':'Delete this row?'))return;ibGetRows().splice(ri,1);ibSaveRows();ibRenderModalTable();}
+
+function ibAddRow(){
+  // Clear filters so the new row is visible
+  _ibModalFilters={dateFrom:'',dateTo:'',q:'',lvl:''};
+  ibGetRows().push({date:'',dateEN:'',sessFR:'',sessEN:'',mFR:'',mEN:'',lvl:'NM',paper:'',grpFR:'',grpEN:'',typeFR:'Non structuré',typeEN:'Unstructured',duree:'',notesFR:'',notesEN:''});
+  ibSaveRows();
+  ibRenderModalFbar(); // rebuild filter bar to show cleared state
+  ibRenderModalTable();
+  setTimeout(()=>{const body=document.querySelector('.ib-modal-body');if(body)body.scrollTop=body.scrollHeight;},50);
+}
+
+function ibResetToDefault(){
+  const fr=uiLang==='fr';
+  if(!confirm(fr?'Rétablir la liste par défaut IB 2027 ? Les modifications seront perdues.':'Reset to default IB 2027 list? All edits will be lost.'))return;
+  _ibRows=IB_RAW_DEFAULT.map(ibBuildRow);
+  _ibSelected.clear();
+  ibSaveRows();ibUpdateSelBar();ibRenderModalTable();
+}
+
+// ── CSV Export ──
+function ibExportCSV(){
+  const rows=ibGetRows();
+  const headers=['date','dateEN','sessFR','sessEN','mFR','mEN','lvl','paper','grpFR','grpEN','typeFR','typeEN','duree','notesFR','notesEN'];
+  const csv=[headers.join(','),...rows.map(r=>headers.map(h=>{const v=String(r[h]||'');return v.includes(',')||v.includes('"')||v.includes('\n')?'"'+v.replace(/"/g,'""')+'"':v;}).join(','))].join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}));
+  a.download='examens_IB_2027_custom.csv';a.click();
+}
+
+// ── CSV Import ──
+function ibImportCSV(event){
+  const file=event.target.files&&event.target.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const text=e.target.result.replace(/^\uFEFF/,'');
+      const lines=text.split(/\r?\n/).filter(l=>l.trim());
+      if(lines.length<2){alert('Fichier invalide / Invalid file');return;}
+
+      // Parse CSV line respecting quoted fields
+      function parseCSVLine(line){
+        const result=[];let cur='';let inQ=false;
+        for(let i=0;i<line.length;i++){
+          const c=line[i];
+          if(c==='"'){if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ;}
+          else if(c===','&&!inQ){result.push(cur.trim());cur='';}
+          else cur+=c;
+        }
+        result.push(cur.trim());
+        return result;
+      }
+
+      const rawHeaders=parseCSVLine(lines[0]);
+      const headers=rawHeaders.map(h=>h.toLowerCase().replace(/"/g,'').trim());
+
+      // Comprehensive column mapping — handles both our export format and the original CSV format
+      const keyMap={
+        // Date columns
+        'date':'date','date_fr':'date',
+        'date_en':'dateEN','dateen':'dateEN',
+        // Session — single column (EN or FR) or separate
+        'session':'_session','session_fr':'sessFR','sessfr':'sessFR',
+        'session_en':'sessEN','sessen':'sessEN',
+        // Subject
+        'subject_fr':'mFR','subject (fr)':'mFR','mfr':'mFR','matière (fr)':'mFR','matiere_fr':'mFR','matière_fr':'mFR',
+        'subject_en':'mEN','subject (en)':'mEN','men':'mEN','matière (en)':'mEN','matiere_en':'mEN','matière_en':'mEN',
+        // Level
+        'level':'lvl','niveau':'lvl','lvl':'lvl','level_sl_hl':'lvl','level_nm_ns':'lvl',
+        // Paper
+        'paper':'paper','épreuve':'paper','epreuve':'paper',
+        // Group
+        'group_fr':'grpFR','groupe_fr':'grpFR','group (fr)':'grpFR','grpfr':'grpFR',
+        'group_en':'grpEN','groupe_en':'grpEN','group (en)':'grpEN','grpen':'grpEN',
+        // Type
+        'type_fr':'typeFR','type (fr)':'typeFR','typefr':'typeFR',
+        'type_en':'typeEN','type (en)':'typeEN','typeen':'typeEN',
+        // Duration
+        'duration_min':'duree','durée_min':'duree','duree_min':'duree',
+        'duration (min)':'duree','durée (min)':'duree',
+        'duration':'duree','durée':'duree','duree':'duree',
+        // Notes
+        'notes_fr':'notesFR','notes (fr)':'notesFR','notesfr':'notesFR',
+        'notes_en':'notesEN','notes (en)':'notesEN','notesen':'notesEN',
+      };
+
+      const colIdx={};
+      headers.forEach((h,i)=>{if(keyMap[h])colIdx[keyMap[h]]=i;});
+
+      function getCell(cells,key){
+        const i=colIdx[key];
+        return(i!==undefined&&i<cells.length)?cells[i].replace(/^"|"$/g,'').replace(/""/g,'"').trim():'';
+      }
+
+      // Detect if there's a single Session column (EN values Morning/Afternoon)
+      const hasSingleSession=colIdx['_session']!==undefined&&colIdx['sessFR']===undefined;
+
+      function sessionToFR(s){
+        const sl=s.toLowerCase().trim();
+        if(sl==='morning'||sl==='matin')return 'Matin';
+        if(sl==='afternoon'||sl==='après-midi')return 'Après-midi';
+        return s;
+      }
+      function sessionToEN(s){
+        const sl=s.toLowerCase().trim();
+        if(sl==='matin'||sl==='morning')return 'Morning';
+        if(sl==='après-midi'||sl==='afternoon')return 'Afternoon';
+        return s;
+      }
+
+      // Normalise level: convert SL/HL → NM/NS for internal storage
+      function normLevel(v){
+        if(!v)return'NM';
+        const u=v.trim().toUpperCase();
+        const map={'SL':'NM','HL':'NS','SL/HL':'NM/NS','HL/SL':'NM/NS','NM/NS':'NM/NS','NS/NM':'NM/NS','NM':'NM','NS':'NS'};
+        return map[u]||u;
+      }
+
+      const parsed=lines.slice(1).map(line=>{
+        const cells=parseCSVLine(line);
+        if(cells.every(c=>!c))return null;
+
+        let sessFR,sessEN;
+        if(hasSingleSession){
+          const raw=getCell(cells,'_session');
+          sessFR=sessionToFR(raw);sessEN=sessionToEN(raw);
+        } else {
+          sessFR=getCell(cells,'sessFR')||sessionToFR(getCell(cells,'sessEN'));
+          sessEN=getCell(cells,'sessEN')||sessionToEN(getCell(cells,'sessFR'));
+        }
+
+        return{
+          date:getCell(cells,'date'),
+          dateEN:getCell(cells,'dateEN'),
+          sessFR,sessEN,
+          mFR:getCell(cells,'mFR'),
+          mEN:getCell(cells,'mEN'),
+          lvl:normLevel(getCell(cells,'lvl')),
+          paper:getCell(cells,'paper'),
+          grpFR:getCell(cells,'grpFR'),
+          grpEN:getCell(cells,'grpEN'),
+          typeFR:getCell(cells,'typeFR')||'Non structuré',
+          typeEN:getCell(cells,'typeEN')||'Unstructured',
+          duree:getCell(cells,'duree'),
+          notesFR:getCell(cells,'notesFR'),
+          notesEN:getCell(cells,'notesEN'),
+        };
+      }).filter(r=>r&&(r.mFR||r.mEN));
+
+      if(!parsed.length){
+        alert(uiLang==='fr'?'Aucune ligne valide trouvée.':'No valid rows found.');
+        event.target.value='';return;
+      }
+
+      // Merge: update existing rows matched by date+mFR+lvl+paper, add new ones
+      const existing=ibGetRows();
+      let added=0,updated=0;
+      parsed.forEach(nr=>{
+        const idx=existing.findIndex(er=>
+          er.date===nr.date&&er.mFR===nr.mFR&&er.lvl===nr.lvl&&er.paper===nr.paper);
+        if(idx>=0){Object.assign(existing[idx],nr);updated++;}
+        else{existing.push(nr);added++;}
+      });
+      ibSaveRows();ibRenderModalTable();
+      const fr=uiLang==='fr';
+      alert(fr?(added+' ajoutée(s), '+updated+' mise(s) à jour'):(added+' added, '+updated+' updated'));
+    }catch(err){alert('Erreur import / Import error: '+err.message+'\n'+err.stack);}
+    event.target.value='';
+  };
+  reader.readAsText(file,'UTF-8');
+}
 loadTemplates();
 
 // Render a template to a string, replacing tokens with runtime values
@@ -1498,11 +2311,11 @@ function ibAnnounce(examList, event, interrupt=false, examIds=null){
   const now=new Date();
   const allRunning=exams.filter(e=>e.status==='running'||e.status==='reading');
   const groups=ibGroupAnnouncements(examList, event, now);
-  const ids=examIds||examList.map(e=>e.id);
   groups.forEach(group=>{
     const text=ibBuildAnnouncement(group, allRunning);
-    const tIds=group.timers&&group.timers.length>0?group.timers.map(t=>t.id):null;
-    announce(text,{interrupt,examIds:ids,timerIds:tIds});
+    // Use only the exams in this specific group for the speaking indicator
+    const groupIds=group.exams.map(e=>e.id);
+    announce(text,{interrupt,examIds:groupIds,timerIds:null});
   });
 }
 
@@ -2271,7 +3084,21 @@ function buildAddPanel(){
     <div class="panel-section-title">${t('newExamTitle')}</div>
     <div class="panel-field">
       <label>${t('newTitleLabel')}</label>
-      <input type="text" id="new-title" placeholder="${t('newTitlePlaceholder')}">
+      <input type="text" id="new-title" placeholder="${t('newTitlePlaceholder')}" oninput="checkNewExam()">
+    </div>
+    <div class="ib-picker" style="margin-bottom:10px">
+      <div class="ib-picker-filters">
+        <input type="text" id="new-ib-date" placeholder="${t('ibPickerDate')}" value="${ibDefaultDateFrom()}" oninput="buildAddPanelFilter()" onfocus="buildAddPanelFilter();ibShowDatePickerPanel(this,'from')" style="min-width:70px;max-width:90px;cursor:pointer">
+        <input type="text" id="new-ib-date2" placeholder="${t('ibPickerDateTo')}" value="${ibDefaultDateTo()}" oninput="buildAddPanelFilter()" onfocus="buildAddPanelFilter();ibShowDatePickerPanel(this,'to')" style="min-width:70px;max-width:90px;cursor:pointer">
+        <input type="text" id="new-ib-q" placeholder="${t('ibPickerSearch')}" oninput="buildAddPanelFilter()" onfocus="buildAddPanelFilter()" style="min-width:100px;flex:2">
+        <select id="new-ib-lvl" onchange="buildAddPanelFilter()" onfocus="buildAddPanelFilter()" style="min-width:60px;max-width:70px">
+          <option value="">${t('ibPickerAllLevels')}</option>
+          <option value="NM">NM/SL</option>
+          <option value="NS">NS/HL</option>
+          <option value="NM/NS">NM+NS</option>
+        </select>
+      </div>
+      <div class="ib-results" id="new-ib-res"></div>
     </div>
     <div class="panel-time-row">
       <div class="panel-field"><label>${t('hoursLabel')}</label><input type="number" id="new-h" min="0" max="23" value="0" oninput="checkNewExam()"></div>
@@ -2308,6 +3135,82 @@ function buildAddPanel(){
       ${t('panelConfirm')}
     </button>`;
   checkNewExam();
+}
+
+// IB picker for the add-exam panel (uses 'new-ib-*' IDs)
+function buildAddPanelFilter(){
+  const dateFrom=document.getElementById('new-ib-date')?.value||'';
+  const dateTo=document.getElementById('new-ib-date2')?.value||'';
+  const q=(document.getElementById('new-ib-q')?.value||'').toLowerCase().trim();
+  const lvl=document.getElementById('new-ib-lvl')?.value||'';
+  const res=document.getElementById('new-ib-res');if(!res)return;
+  const rows=ibGetRows();
+  const fromInt=ibDateToInt(dateFrom);const toInt=ibDateToInt(dateTo);
+  const fr=announceLang==='fr'||uiLang==='fr';
+  const filtered=rows.filter(r=>{
+    const rd=ibDateToInt(r.date);
+    if(rd&&fromInt&&rd<fromInt)return false;
+    if(rd&&toInt&&rd>toInt)return false;
+    if(lvl&&r.lvl!==lvl)return false;
+    if(q&&!(r.mFR+' '+r.mEN+' '+r.paper).toLowerCase().includes(q))return false;
+    return true;
+  }).slice(0,30);
+  if(!filtered.length){res.innerHTML='<div class="ib-result-empty">'+(fr?'Aucun résultat':'No results')+'</div>';return;}
+  res.innerHTML=filtered.map(r=>{
+    const ri=rows.indexOf(r);
+    const subj=fr?r.mFR:r.mEN;
+    const lvlDisp=fr?r.lvl:(IB_LEVEL_FR2EN[r.lvl]||r.lvl);
+    const dur=r.duree?(r.duree+' min'):'—';
+    return '<div class="ib-result-item" onclick="buildAddPanelSelect('+ri+')">'
+      +'<span class="ib-result-date">'+r.date+'</span>'
+      +'<span class="ib-result-subject">'+escHtml(subj)+'</span>'
+      +'<span class="ib-result-paper">'+escHtml(r.paper)+'</span>'
+      +'<span class="ib-result-lvl">'+escHtml(lvlDisp)+'</span>'
+      +'<span class="ib-result-dur">'+dur+'</span>'
+      +'</div>';
+  }).join('');
+}
+function buildAddPanelSelect(rowIdx){
+  const rows=ibGetRows();const r=rows[rowIdx];if(!r)return;
+  const fr=announceLang==='fr'||uiLang==='fr';
+  const subj=fr?r.mFR:r.mEN;
+  const lvlDisp=fr?r.lvl:(IB_LEVEL_FR2EN[r.lvl]||r.lvl);
+  const title=subj+' '+r.paper+' '+lvlDisp;
+  const mins=parseInt(r.duree)||0;
+  const ibType=ibTypeToTimerType(r.typeFR);
+  const hasReading=ibTypeHasReading(r.typeFR);
+  // Fill fields
+  const ti=document.getElementById('new-title');if(ti)ti.value=title;
+  const nh=document.getElementById('new-h');if(nh)nh.value='0';
+  const nm=document.getElementById('new-m');if(nm)nm.value=String(mins);
+  const ns=document.getElementById('new-s');if(ns)ns.value='0';
+  // Reading
+  newExamReadingOn=hasReading;
+  const row=document.getElementById('new-reading-row'),sw=document.getElementById('new-sw-reading'),inp=document.getElementById('new-reading-min');
+  if(row)row.classList.toggle('on',hasReading);if(sw)sw.classList.toggle('on',hasReading);if(inp)inp.disabled=!hasReading;
+  // Hide results
+  const res=document.getElementById('new-ib-res');if(res)res.innerHTML='';
+  checkNewExam();
+}
+function ibShowDatePickerPanel(input,which){
+  const fakeEid='new-panel';
+  // Store target specially
+  ibHideDatePicker();
+  const val=input.value;
+  const p=val.match(/^(\d{1,2})\/(\d{1,2})/);
+  _ibDpYear=p?(new Date().getFullYear()):(new Date().getFullYear());
+  _ibDpMonth=p?parseInt(p[2]):(new Date().getMonth()+1);
+  _ibDpTarget={input,eid:null,which,isPanel:true};
+  const dp=document.createElement('div');
+  dp.id='ib-datepicker';dp.className='ib-datepicker';
+  document.body.appendChild(dp);
+  ibRenderDatePicker();
+  const rect=input.getBoundingClientRect();
+  dp.style.top=(rect.bottom+4)+'px';
+  dp.style.left=rect.left+'px';
+  if(rect.left+dp.offsetWidth>window.innerWidth-10)
+    dp.style.left=Math.max(4,window.innerWidth-dp.offsetWidth-10)+'px';
+  setTimeout(()=>document.addEventListener('mousedown',ibDpOutside),0);
 }
 
 function toggleNewExtra(key){
@@ -2462,16 +3365,13 @@ function confirmQuit(){
   if(existing){existing.remove();return;}
   const overlay=document.createElement('div');overlay.id='quit-confirm-overlay';
   overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
-  const box=document.createElement('div');
-  box.style.cssText='background:#fff;border-radius:16px;padding:24px;max-width:320px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)';
+  const box=document.createElement('div');box.style.cssText='background:#fff;border-radius:16px;padding:24px;max-width:320px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)';
   const p1=document.createElement('p');p1.style.cssText='font-size:16px;font-weight:600;color:#1a1a18;margin:0 0 8px';p1.textContent=t('confirmQuitTitle');
   const p2=document.createElement('p');p2.style.cssText='font-size:14px;color:#666;margin:0 0 20px';p2.textContent=t('confirmQuitMsg');
   const row=document.createElement('div');row.style.cssText='display:flex;gap:10px';
-  const bc=document.createElement('button');
-  bc.style.cssText='flex:1;padding:10px;border:1px solid #d0cdc6;border-radius:10px;background:#fff;font-size:15px;font-family:inherit;cursor:pointer';
+  const bc=document.createElement('button');bc.style.cssText='flex:1;padding:10px;border:1px solid #d0cdc6;border-radius:10px;background:#fff;font-size:15px;font-family:inherit;cursor:pointer';
   bc.textContent=t('cancel');bc.onclick=function(){document.getElementById('quit-confirm-overlay').remove();};
-  const bq=document.createElement('button');
-  bq.style.cssText='flex:1;padding:10px;border:none;border-radius:10px;background:#c0392b;color:#fff;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer';
+  const bq=document.createElement('button');bq.style.cssText='flex:1;padding:10px;border:none;border-radius:10px;background:#c0392b;color:#fff;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer';
   bq.textContent=t('quit');bq.onclick=function(){document.getElementById('quit-confirm-overlay').remove();doConfirmedQuit();};
   row.appendChild(bc);row.appendChild(bq);box.appendChild(p1);box.appendChild(p2);box.appendChild(row);
   overlay.appendChild(box);document.body.appendChild(overlay);
