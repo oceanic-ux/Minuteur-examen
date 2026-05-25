@@ -378,7 +378,7 @@ var UI={
     readingName:'Temps de lecture',
     readingSub:(v)=>`${v} minute${v>1?'s':''} avant le début`,
     examsSection:'Examens',
-    ibPickerDate:'Depuis DD/MM',ibPickerDateTo:'Jusqu\'à DD/MM',ibPickerSearch:'Matière, épreuve…',ibPickerAllLevels:'Niveaux',
+    ibPickerDate:'Depuis DD/MM',ibPickerDateTo:'Jusqu\'à DD/MM',ibPickerSearch:'Matière, épreuve…',ibPickerAllLevels:'Niveaux',ibPickerAllSessions:'Session',
     ibPickerManagerBtn:'📋 Programme IB',
     addExam:'Ajouter un examen',
     alertsSection:'Alertes sonores',
@@ -433,7 +433,7 @@ var UI={
     readingName:'Reading time',
     readingSub:(v)=>`${v} minute${v>1?'s':''} before start`,
     examsSection:'Exams',
-    ibPickerDate:'From DD/MM',ibPickerDateTo:'To DD/MM',ibPickerSearch:'Subject, paper…',ibPickerAllLevels:'Levels',
+    ibPickerDate:'From DD/MM',ibPickerDateTo:'To DD/MM',ibPickerSearch:'Subject, paper…',ibPickerAllLevels:'Levels',ibPickerAllSessions:'Session',
     ibPickerManagerBtn:'📋 IB Schedule',
     addExam:'Add an exam',
     alertsSection:'Sound alerts',
@@ -972,9 +972,13 @@ function renderExamList(){
           : `<button class="exam-card-remove" style="opacity:.25;cursor:not-allowed" disabled>🗑</button>`}
       </div>
       <div class="field" style="margin-bottom:10px">
-        <label>${t('titleLabel')}</label>
+        <label>${t('titleLabel')} <button onclick="showHelp('examTitle')" class="help-btn">?</button></label>
         <input type="text" id="inp-title-${def.id}" placeholder="${t('titlePlaceholder')}" value="${escHtml(def.title)}" oninput="examDefs.find(e=>e.id===${def.id}).title=this.value">
         <div id="ib-picker-${def.id}" class="ib-picker" style="margin-top:6px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+            <span style="font-size:11px;color:#1a4a8a;font-weight:500">${t('ibPickerSearch').split('…')[0]}…</span>
+            <button onclick="showHelp('dates')" class="help-btn" style="margin-left:0">?</button>
+          </div>
           <div class="ib-picker-filters" id="ib-pf-${def.id}">
             <input type="text" id="ib-pf-date-${def.id}" placeholder="${t('ibPickerDate')}" value="${escHtml(def._ibDateFrom||ibDefaultDateFrom())}" oninput="ibPickerFilter(${def.id})" onfocus="ibPickerFilter(${def.id});ibShowDatePicker(this,${def.id},'from')" style="min-width:70px;max-width:90px;cursor:pointer">
             <input type="text" id="ib-pf-date2-${def.id}" placeholder="${t('ibPickerDateTo')}" value="${escHtml(def._ibDateTo||ibDefaultDateTo())}" oninput="ibPickerFilter(${def.id})" onfocus="ibPickerFilter(${def.id});ibShowDatePicker(this,${def.id},'to')" style="min-width:70px;max-width:90px;cursor:pointer">
@@ -984,6 +988,11 @@ function renderExamList(){
               <option value="NM">NM/SL</option>
               <option value="NS">NS/HL</option>
               <option value="NM/NS">NM+NS</option>
+            </select>
+            <select id="ib-pf-sess-${def.id}" onchange="ibPickerFilter(${def.id})" onfocus="ibPickerFilter(${def.id})" style="min-width:70px;max-width:90px">
+              <option value="">${t('ibPickerAllSessions')}</option>
+              <option value="Matin">${uiLang==='en'?'Morning':'Matin'}</option>
+              <option value="Après-midi">${uiLang==='en'?'Afternoon':'Après-midi'}</option>
             </select>
           </div>
           <div class="ib-results" id="ib-res-${def.id}"></div>
@@ -995,7 +1004,7 @@ function renderExamList(){
         <div class="field"><label>${t('minutesLabel')}</label><input type="number" id="inp-m-${def.id}" min="0" max="59" value="${def._m!==undefined?def._m:'60'}" oninput="checkStart()"></div>
         <div class="field"><label>${t('secondsLabel')}</label><input type="number" id="inp-s-${def.id}" min="0" max="59" value="${def._s!==undefined?def._s:'0'}" oninput="checkStart()"></div>
       </div>
-      <div class="section-title" style="margin-bottom:6px">${t('extrasSection')}</div>
+      <div class="section-title" style="margin-bottom:6px">${t('extrasSection')} <button onclick="showHelp('extraTime')" class="help-btn">?</button></div>
       <div class="extra-toggles" style="margin-bottom:8px">
         <div class="extra-toggle on" id="et-${def.id}-main" onclick="toggleExtra(${def.id},'main')"><div class="sw-sm on"></div>Principal</div>
         <div class="extra-toggle ${def.tog.t25?'on':''}" id="et-${def.id}-t25" onclick="toggleExtra(${def.id},'t25')">
@@ -1594,10 +1603,11 @@ function ibPickerFilter(eid){
   const dateTo=document.getElementById('ib-pf-date2-'+eid)?.value||'';
   const q=(document.getElementById('ib-pf-q-'+eid)?.value||'').toLowerCase().trim();
   const lvl=document.getElementById('ib-pf-lvl-'+eid)?.value||'';
+  const sess=document.getElementById('ib-pf-sess-'+eid)?.value||'';
   def._ibDateFrom=dateFrom; def._ibDateTo=dateTo; def._ibQuery=q;
 
   // Mark active
-  ['ib-pf-date-'+eid,'ib-pf-date2-'+eid,'ib-pf-q-'+eid,'ib-pf-lvl-'+eid].forEach(id=>{
+  ['ib-pf-date-'+eid,'ib-pf-date2-'+eid,'ib-pf-q-'+eid,'ib-pf-lvl-'+eid,'ib-pf-sess-'+eid].forEach(id=>{
     const el=document.getElementById(id);if(!el)return;
     el.classList.toggle('active',!!(el.value&&el.value.trim()));
   });
@@ -1613,12 +1623,13 @@ function ibPickerFilter(eid){
     if(rd&&fromInt&&rd<fromInt)return false;
     if(rd&&toInt&&rd>toInt)return false;
     if(lvl&&r.lvl!==lvl)return false;
+    if(sess&&r.sessFR!==sess)return false;
     if(q){
       const hay=(r.mFR+' '+r.mEN+' '+r.paper).toLowerCase();
       if(!hay.includes(q))return false;
     }
     return true;
-  }).slice(0,30);
+  }).sort((a,b)=>(ibDateToInt(a.date)||0)-(ibDateToInt(b.date)||0)).slice(0,30);
 
   if(!filtered.length){
     res.innerHTML='<div class="ib-result-empty">'+(fr?'Aucun résultat':'No results')+'</div>';
@@ -2020,6 +2031,68 @@ function ibResetToDefault(){
   _ibSelected.clear();
   ibSaveRows();ibUpdateSelBar();ibRenderModalTable();
 }
+
+// ══ HELP SYSTEM ══════════════════════════════════════════════════════════════
+const HELP_CONTENT={
+  fr:{
+    global:{title:'Comment utiliser le minuteur multi-examens',html:`<h3>Vue d'ensemble</h3><p>Ce logiciel gère plusieurs minuteurs d'examen simultanément, avec temps de lecture, temps supplémentaire, alertes sonores et annonces vocales officielles IB.</p>
+<h3>Étapes typiques</h3><ul><li><strong>Réglages</strong> — Configurez le temps de lecture, les alertes, le mode audio et les examens.</li><li><strong>Confirmer</strong> — Passe à l'écran des minuteurs.</li><li><strong>Démarrer tous</strong> — Lance tous les examens simultanément, ou chaque colonne individuellement.</li><li><strong>Pause</strong> — Met en pause / reprend tous les minuteurs.</li><li><strong>⚙ pendant l'examen</strong> — Panneau latéral : ajuster les temps, ajouter un examen, changer les réglages vocaux.</li><li><strong>Quitter</strong> — Retourne aux réglages.</li></ul>
+<h3>Temps de lecture</h3><p>Période avant l'examen : les candidats lisent le sujet mais n'écrivent pas encore. Durée commune configurable, activable par épreuve. À la fin, l'examen démarre automatiquement.</p>
+<h3>Épreuves et temps supplémentaire</h3><p>Chaque carte d'épreuve peut avoir un timer Principal, +25% et +50% (ou une fraction comme 1/3). Les cercles et annonces sont indépendants par timer. Le sélecteur IB remplit le nom, la durée et le type automatiquement.</p>
+<h3>Alertes sonores</h3><p>Deux alertes configurables avant la fin (30 min et 5 min par défaut). Mode Silence / Son (bip) / Voix (annonce lue). Les repères sur les cercles se mettent à jour automatiquement.</p>
+<h3>Logo</h3><p>Un logo s'affiche au centre de chaque cercle. Remplaçable depuis les réglages (JPG, PNG, SVG). Le logo personnalisé est mémorisé dans le navigateur.</p>
+<h3>Mode audio et annonces</h3><p><strong>Silence</strong> — aucun son. <strong>Son</strong> — bips aux alertes et fins d'examen. <strong>Voix</strong> — annonces lues automatiquement. En mode Voix, activez les Annonces IB officielles pour utiliser les textes standards du Baccalauréat International, ou personnalisez chaque annonce librement.</p>
+<h3>Langue des annonces</h3><p>La langue des annonces vocales (FR/EN) est indépendante de la langue de l'interface. Changez-la dans la section Mode audio > Langue.</p>
+<h3>Programme IB</h3><p>Le bouton 📋 Programme IB ouvre un gestionnaire de calendrier. Importez un fichier CSV (exporté ou créé avec l'aide d'une IA) pour remplir automatiquement les épreuves.</p>`},
+    reading:{title:'Temps de lecture',html:`<p>Période avant l'examen : les candidats <strong>lisent le sujet mais n'écrivent pas</strong>.</p><ul><li>La durée ici est <strong>commune à toutes les épreuves</strong>.</li><li>Activez ou désactivez par épreuve avec l'interrupteur dans chaque carte.</li><li>À la fin, une annonce vocale est faite et le minuteur démarre automatiquement.</li></ul>`},
+    alerts:{title:'Alertes sonores',html:`<p>Deux alertes configurables avant la fin de chaque minuteur.</p><ul><li><strong>Première alerte</strong> — 30 min par défaut. Modifiez ou désactivez.</li><li><strong>Deuxième alerte</strong> — 5 min par défaut.</li><li><strong>Son</strong> : bip. <strong>Voix</strong> : annonce lue.</li><li>Les repères sur les cercles se mettent à jour automatiquement.</li></ul>`},
+    exams:{title:'Gestion des épreuves',html:`<p>Chaque carte = une épreuve avec ses propres minuteurs (Principal, +25%, +50%).</p><ul><li><strong>Nom</strong> — Tapez ou sélectionnez via le sélecteur IB.</li><li><strong>Durée</strong> — H / Min / Sec pour le temps principal.</li><li><strong>Temps supplémentaire</strong> — +25% et/ou +50% calculés automatiquement.</li><li><strong>Temps de lecture</strong> — Activable par épreuve.</li><li><strong>Type IB</strong> — Détermine les annonces officielles.</li></ul>`},
+    examTitle:{title:"Nom de l'épreuve",html:`<p>Le nom saisi s'affiche <strong>au-dessus du minuteur</strong> de cette épreuve.</p><ul><li>En mode <strong>Voix</strong>, le nom est utilisé dans les annonces pour distinguer les examens — ex. <em>"Pour Mathématiques NS 1 : L'examen commence…"</em></li><li>Le <strong>sélecteur IB</strong> ci-dessous remplit automatiquement le nom (matière + épreuve + niveau), la durée, le type d'annonce et le temps de lecture selon les standards IB.</li></ul>`},
+    extraTime:{title:'Temps supplémentaire',html:`<p>Minuteurs séparés pour les candidats ayant droit à du temps additionnel.</p><ul><li><strong>Principal</strong> — toujours actif, durée standard de l'examen.</li><li><strong>+25%</strong> et <strong>+50%</strong> — si activés, démarrent <strong>en même temps</strong> que le Principal et durent proportionnellement plus longtemps. Affichés sous le timer Principal dans la même colonne.</li><li>Vous pouvez entrer un <strong>pourcentage</strong> (ex. <code>25%</code>), une <strong>proportion décimale</strong> (ex. <code>0.5</code> = 50%) ou une <strong>fraction</strong> (ex. <code>1/3</code> = tiers-temps).</li><li>Cercles et annonces vocales sont indépendants pour chaque timer.</li></ul>`},
+    addExam:{title:"Ajouter un examen",html:`<p>Le bouton <strong>＋ Ajouter un examen</strong> ajoute une nouvelle carte d'épreuve sous les existantes.</p><ul><li>Vous pouvez configurer le nom, la durée, le temps supplémentaire et le temps de lecture pour chaque épreuve indépendamment.</li><li>Pendant que les minuteurs sont en marche, utilisez le bouton ⚙ (en haut à droite) → onglet <strong>Ajouter un examen</strong> pour ajouter une épreuve sans interrompre les autres.</li><li>Le sélecteur IB intégré vous permet de chercher et sélectionner une épreuve du programme, ce qui remplit automatiquement tous les champs.</li></ul>`},
+    alert1:{title:'Première alerte',html:`<p>Déclenchée automatiquement avant la fin de chaque minuteur.</p><ul><li>Par défaut : <strong>30 minutes</strong> avant la fin.</li><li>Changez la valeur en tapant une nouvelle durée dans le champ.</li><li>Désactivez avec l'interrupteur à droite.</li><li>En mode <strong>Son</strong> : un bip est émis. En mode <strong>Voix</strong> : une annonce est lue (ex. <em>"Il vous reste 30 minutes."</em>).</li><li>Un repère <code>−30</code> apparaît sur les cercles à la position correspondante et se met à jour si vous changez la durée.</li></ul>`},
+    alert2:{title:'Deuxième alerte',html:`<p>Deuxième alerte automatique avant la fin de chaque minuteur.</p><ul><li>Par défaut : <strong>5 minutes</strong> avant la fin.</li><li>Changez la valeur ou désactivez avec l'interrupteur.</li><li>Fonctionne comme la première alerte — bip ou annonce vocale selon le mode audio.</li><li>Le repère <code>−5</code> sur les cercles indique visuellement ce moment.</li></ul>`},
+    logo:{title:'Logo dans les cercles',html:`<p>Un logo s'affiche au centre de chaque cercle de minuteur.</p><ul><li>Par défaut : le logo Haut-Lac.</li><li>Cliquez <strong>Changer</strong> pour télécharger votre propre image (JPG, PNG ou SVG).</li><li>Le bouton <strong>↺</strong> rétablit le logo original.</li><li>Le logo personnalisé est enregistré dans le navigateur et réapparaît à la prochaine ouverture.</li><li>Le logo s'adapte automatiquement à la taille des cercles.</li></ul>`},
+    audioMode:{title:'Mode audio',html:`<p>Contrôle le type de son émis par le logiciel.</p><ul><li><strong>🔇 Silence</strong> — Aucun son, aucune annonce. Utile si vous gérez les annonces vous-même.</li><li><strong>🔔 Son</strong> — Un bip sonore est émis aux alertes et à la fin de chaque minuteur.</li><li><strong>🗣 Voix</strong> — Des annonces vocales sont lues automatiquement. Des options supplémentaires apparaissent : langue, voix, mode IB, personnalisation.</li></ul>`},
+    announceLang:{title:'Langue des annonces',html:`<p>La langue des annonces vocales est <strong>indépendante</strong> de la langue de l'interface.</p><ul><li>Choisissez <strong>FR</strong> pour les annonces en français ou <strong>EN</strong> pour l'anglais.</li><li>Cela n'affecte pas les étiquettes de l'interface — seulement ce qui est lu à voix haute.</li><li>Vous pouvez aussi choisir la voix spécifique parmi les voix disponibles sur votre appareil dans le sélecteur <em>Voix</em> juste en dessous.</li></ul>`},
+    ibAnnounce:{title:'Annonces IB officielles',html:`<p>Lorsque ce mode est activé, les annonces vocales utilisent les <strong>textes officiels du Baccalauréat International</strong>.</p><ul><li>Les textes varient selon le type d'épreuve (structurée, QCM, compréhension orale, etc.).</li><li>Les annonces sont faites en français ou en anglais selon la langue choisie.</li><li>Ce mode est recommandé pour les examens IB officiels. Pour les examens internes ou d'autres systèmes, utilisez le mode personnalisé.</li><li>Désactivez ce mode pour utiliser les annonces personnalisées à la place.</li></ul>`},
+    customAnnounce:{title:'Personnaliser les annonces',html:`<p>Modifiez le texte de chaque annonce vocale pour l'adapter à vos besoins.</p><ul><li>Cliquez sur <strong>Personnaliser les annonces</strong> pour ouvrir le panneau de modification.</li><li>Six événements sont personnalisables : début lecture, fin lecture, début examen, alerte 30 min, alerte 5 min, fin examen.</li><li>Utilisez des tokens dynamiques dans vos textes :<ul><li><code>{duree}</code> — durée de l'examen (ex. "90 minutes")</li><li><code>{heure}</code> — heure actuelle</li><li><code>{restant}</code> — temps restant</li><li><code>{lecture}</code> — durée du temps de lecture</li></ul></li><li>Si plusieurs examens ont des durées différentes, les annonces sont automatiquement groupées et préfixées du nom de l'épreuve.</li></ul>`},
+    dates:{title:'Sélectionner des examens IB',html:`<p>Les filtres sous le nom permettent de chercher un examen et de remplir automatiquement nom, durée et type.</p><ul><li><strong>Date depuis / jusqu'à</strong> — filtrez par période. Cliquez pour ouvrir le calendrier ; les jours avec examens sont surlignés.</li><li><strong>Session</strong> — Matin ou Après-midi.</li><li><strong>Niveau</strong> — NM (SL) ou NS (HL).</li><li><strong>Recherche</strong> — tapez le début du nom de la matière ou de l'épreuve.</li></ul><h3>Utiliser votre propre calendrier</h3><ol style="padding-left:18px;margin:4px 0 8px"><li>Ouvrez <strong>📋 Programme IB</strong>.</li><li>Cliquez <strong>↓ Exporter CSV</strong> pour le format de référence.</li><li>Créez votre liste dans ce format et importez-la.</li></ol><h3>💡 Astuce IA</h3><p>Exportez un CSV de référence, puis fournissez ce CSV + votre PDF de calendrier à une IA (Claude, ChatGPT…) et demandez : <em>"Crée un CSV dans ce format pour ces examens."</em></p>`}
+  },
+  en:{
+    global:{title:'How to use the multi-exam timer',html:`<h3>Overview</h3><p>This software manages multiple exam timers simultaneously, with reading time, extra time, sound alerts, and official IB voice announcements.</p>
+<h3>Typical steps</h3><ul><li><strong>Settings</strong> — Configure reading time, alerts, audio mode, and exams.</li><li><strong>Confirm</strong> — Switch to the timer screen.</li><li><strong>Start all</strong> — Launch all waiting exams simultaneously, or each column individually.</li><li><strong>Pause</strong> — Pause / resume all timers.</li><li><strong>⚙ during the exam</strong> — Side panel: adjust times, add an exam, change voice settings.</li><li><strong>Quit</strong> — Return to settings.</li></ul>
+<h3>Reading time</h3><p>Period before the exam: candidates may read the paper but not write yet. Common configurable duration, activatable per paper. At the end, the exam timer starts automatically.</p>
+<h3>Papers and extra time</h3><p>Each exam card can have a Principal timer, +25%, and +50% (or a fraction like 1/3). Circles and announcements are independent per timer. The IB selector fills in the name, duration, and type automatically.</p>
+<h3>Sound alerts</h3><p>Two configurable alerts before the end (30 min and 5 min by default). Silence / Sound (beep) / Voice (announcement) modes. Circle markers update automatically.</p>
+<h3>Logo</h3><p>A logo is displayed at the centre of each circle. Replaceable from settings (JPG, PNG, SVG). The custom logo is saved in the browser.</p>
+<h3>Audio mode and announcements</h3><p><strong>Silence</strong> — no sound. <strong>Sound</strong> — beeps at alerts and end of exam. <strong>Voice</strong> — announcements read automatically. In Voice mode, enable Official IB Announcements to use standard IB Diploma Programme texts, or customise each announcement freely.</p>
+<h3>Announcement language</h3><p>The announcement language (FR/EN) is independent of the interface language. Change it in Audio mode > Language.</p>
+<h3>IB Schedule</h3><p>The 📋 IB Schedule button opens a schedule manager. Import a CSV file (exported or created with AI assistance) to automatically populate papers.</p>`},
+    reading:{title:'Reading time',html:`<p>Period before the exam: candidates may <strong>read the paper but not write</strong>.</p><ul><li>The duration here is <strong>common to all papers</strong>.</li><li>Enable or disable per paper with the toggle in each card.</li><li>At the end, a voice announcement is made and the exam timer starts automatically.</li></ul>`},
+    alerts:{title:'Sound alerts',html:`<p>Two configurable alerts before the end of each timer.</p><ul><li><strong>First alert</strong> — 30 min by default. Change or disable.</li><li><strong>Second alert</strong> — 5 min by default.</li><li><strong>Sound</strong>: beep. <strong>Voice</strong>: announcement read aloud.</li><li>The markers on the circles update automatically.</li></ul>`},
+    exams:{title:'Managing papers',html:`<p>Each card = a paper with its own timers (Principal, +25%, +50%).</p><ul><li><strong>Name</strong> — Type manually or select via the IB selector.</li><li><strong>Duration</strong> — H / Min / Sec for the main time.</li><li><strong>Extra time</strong> — +25% and/or +50% calculated automatically.</li><li><strong>Reading time</strong> — Activatable per paper.</li><li><strong>IB type</strong> — Determines official announcements.</li></ul>`},
+    examTitle:{title:'Paper name',html:`<p>The name entered is displayed <strong>above the timer</strong> for this paper.</p><ul><li>In <strong>Voice</strong> mode, the name is used in announcements to distinguish exams — e.g. <em>"For Mathematics HL 1: The examination has started…"</em></li><li>The <strong>IB selector</strong> below automatically fills in the name (subject + paper + level), duration, announcement type, and reading time according to IB standards.</li></ul>`},
+    extraTime:{title:'Extra time',html:`<p>Separate timers for candidates entitled to additional time.</p><ul><li><strong>Principal</strong> — always active, standard exam duration.</li><li><strong>+25%</strong> and <strong>+50%</strong> — if enabled, start <strong>at the same time</strong> as Principal and run proportionally longer. Displayed below the Principal timer in the same column.</li><li>You can enter a <strong>percentage</strong> (e.g. <code>25%</code>), a <strong>decimal proportion</strong> (e.g. <code>0.5</code> = 50%), or a <strong>fraction</strong> (e.g. <code>1/3</code> for one-third extra time).</li><li>Circles and voice announcements are independent for each timer.</li></ul>`},
+    addExam:{title:'Add an exam',html:`<p>The <strong>＋ Add an exam</strong> button adds a new paper card below the existing ones.</p><ul><li>Configure the name, duration, extra time, and reading time for each paper independently.</li><li>While timers are running, use the ⚙ button (top right) → <strong>Add an exam</strong> tab to add a paper without interrupting the others.</li><li>The built-in IB selector lets you search and select a paper from the schedule, automatically filling in all fields.</li></ul>`},
+    alert1:{title:'First alert',html:`<p>Triggered automatically before the end of each timer.</p><ul><li>Default: <strong>30 minutes</strong> before the end.</li><li>Change the value by typing a new duration in the field.</li><li>Disable with the toggle on the right.</li><li>In <strong>Sound</strong> mode: a beep is played. In <strong>Voice</strong> mode: an announcement is read (e.g. <em>"There are 30 minutes remaining."</em>).</li><li>A <code>−30</code> marker appears on the circles at the corresponding position and updates if you change the duration.</li></ul>`},
+    alert2:{title:'Second alert',html:`<p>Second automatic alert before the end of each timer.</p><ul><li>Default: <strong>5 minutes</strong> before the end.</li><li>Change the value or disable with the toggle.</li><li>Works like the first alert — beep or voice announcement depending on the audio mode.</li><li>The <code>−5</code> marker on the circles indicates this moment visually.</li></ul>`},
+    logo:{title:'Logo in the circles',html:`<p>A logo is displayed at the centre of each timer circle.</p><ul><li>Default: the Haut-Lac logo.</li><li>Click <strong>Change</strong> to upload your own image (JPG, PNG, or SVG).</li><li>The <strong>↺</strong> button restores the original logo.</li><li>The custom logo is saved in the browser and reappears on the next visit.</li><li>The logo adapts automatically to the size of the circles.</li></ul>`},
+    audioMode:{title:'Audio mode',html:`<p>Controls the type of sound the software produces.</p><ul><li><strong>🔇 Silence</strong> — No sound, no announcements. Useful if you manage announcements yourself.</li><li><strong>🔔 Sound</strong> — A beep is played at alerts and at the end of each timer.</li><li><strong>🗣 Voice</strong> — Voice announcements are read automatically. Additional options appear: language, voice, IB mode, customisation.</li></ul>`},
+    announceLang:{title:'Announcement language',html:`<p>The announcement language is <strong>independent</strong> of the interface language.</p><ul><li>Choose <strong>FR</strong> for French announcements or <strong>EN</strong> for English.</li><li>This only affects what is read aloud — not the interface labels.</li><li>You can also choose a specific voice from those available on your device in the <em>Voice</em> selector just below.</li></ul>`},
+    ibAnnounce:{title:'Official IB announcements',html:`<p>When this mode is enabled, voice announcements use the <strong>official IB Diploma Programme texts</strong>.</p><ul><li>Texts vary depending on the paper type (structured, MCQ, listening comprehension, etc.).</li><li>Announcements are made in French or English depending on the language setting.</li><li>This mode is recommended for official IB examinations. For internal exams or other systems, use custom announcements.</li><li>Disable this mode to use custom announcements instead.</li></ul>`},
+    customAnnounce:{title:'Customise announcements',html:`<p>Edit the text of each voice announcement to suit your needs.</p><ul><li>Click <strong>Customise announcements</strong> to open the editing panel.</li><li>Six events are customisable: reading start, reading end, exam start, 30-min alert, 5-min alert, exam end.</li><li>Use dynamic tokens in your texts:<ul><li><code>{duree}</code> — exam duration (e.g. "90 minutes")</li><li><code>{heure}</code> — current time</li><li><code>{restant}</code> — time remaining</li><li><code>{lecture}</code> — reading time duration</li></ul></li><li>If multiple exams have different durations, announcements are automatically grouped and prefixed with the paper name.</li></ul>`},
+    dates:{title:'Selecting IB exams',html:`<p>The filters below the name let you search and automatically fill in name, duration, and type.</p><ul><li><strong>Date from / to</strong> — filter by period. Click to open the calendar; exam days are highlighted.</li><li><strong>Session</strong> — Morning or Afternoon.</li><li><strong>Level</strong> — SL or HL.</li><li><strong>Search</strong> — type the beginning of the subject or paper name.</li></ul><h3>Using your own timetable</h3><ol style="padding-left:18px;margin:4px 0 8px"><li>Open <strong>📋 IB Schedule</strong>.</li><li>Click <strong>↓ Export CSV</strong> for the reference format.</li><li>Create your list in this format and import it.</li></ol><h3>💡 AI tip</h3><p>Export a reference CSV, then provide this CSV + your timetable PDF to an AI (Claude, ChatGPT…) and ask: <em>"Create a CSV in this format for these exams."</em></p>`}
+  }
+};
+function showHelp(topic){
+  const lang=uiLang==='en'?'en':'fr';
+  const content=(HELP_CONTENT[lang]||HELP_CONTENT.fr)[topic]||(HELP_CONTENT[lang]||HELP_CONTENT.fr).global;
+  document.getElementById('help-modal-title').textContent=content.title;
+  document.getElementById('help-modal-body').innerHTML=content.html;
+  document.getElementById('help-modal-overlay').style.display='flex';
+}
+function closeHelp(){document.getElementById('help-modal-overlay').style.display='none';}
 
 // ── CSV Export ──
 function ibExportCSV(){
@@ -3154,7 +3227,7 @@ function buildAddPanelFilter(){
     if(lvl&&r.lvl!==lvl)return false;
     if(q&&!(r.mFR+' '+r.mEN+' '+r.paper).toLowerCase().includes(q))return false;
     return true;
-  }).slice(0,30);
+  }).sort((a,b)=>(ibDateToInt(a.date)||0)-(ibDateToInt(b.date)||0)).slice(0,30);
   if(!filtered.length){res.innerHTML='<div class="ib-result-empty">'+(fr?'Aucun résultat':'No results')+'</div>';return;}
   res.innerHTML=filtered.map(r=>{
     const ri=rows.indexOf(r);
