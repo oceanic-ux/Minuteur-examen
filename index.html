@@ -14,6 +14,7 @@ body.is-fullscreen .card{border:none;border-radius:0;max-width:none;width:100vw;
 
 /* Top bar */
 .top-bar{position:absolute;top:16px;right:16px;display:none;gap:8px;align-items:center;z-index:10}
+.sync-toggle{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:4px 8px;border-radius:8px;border:1px solid transparent;transition:border-color .15s,background .15s}.sync-toggle.active{border-color:#3a7bd5;background:#ebf3ff}.sync-toggle input[type=checkbox]{width:14px;height:14px;accent-color:#3a7bd5;cursor:pointer}.sync-toggle .sync-lbl{font-size:11px;font-weight:500;color:#555}.sync-toggle.active .sync-lbl{color:#1a4a8a}.sync-toggle .sync-count{font-size:11px;color:#3a7bd5;font-weight:600;min-width:18px;text-align:center}
 .top-bar.visible{display:flex}
 .top-btn{background:none;border:1px solid #ccc;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px;color:#666;display:flex;align-items:center;gap:6px;font-family:inherit;transition:background .12s}
 .top-btn:hover{background:#f5f4f0}
@@ -63,7 +64,7 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
 /* ── Help system ── */
 .help-btn{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#e8e6e0;border:none;cursor:pointer;font-size:11px;font-weight:700;color:#888;font-family:inherit;flex-shrink:0;vertical-align:middle;margin-left:5px;transition:background .12s,color .12s}
 .help-btn:hover{background:#3a7bd5;color:#fff}
-.help-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:7000;display:flex;align-items:center;justify-content:center;padding:4vh 4vw}
+.help-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99990;display:flex;align-items:center;justify-content:center;padding:4vh 4vw}
 .help-modal{background:#fff;border-radius:16px;max-width:600px;width:100%;max-height:84vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.22)}
 .help-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;border-bottom:1px solid #e8e6e0;flex-shrink:0}
 .help-modal-title{font-size:15px;font-weight:600;color:#1a1a18}
@@ -87,7 +88,7 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
 .ib-result-empty{font-size:11px;color:#aaa;text-align:center;padding:8px}
 .ib-selected-tag{background:#ebf3ff;border:1px solid #3a7bd5;border-radius:6px;padding:3px 8px;font-size:11px;color:#1a4a8a;display:flex;align-items:center;gap:6px;margin-top:4px}
 /* ── IB manager modal ── */
-.ib-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:5000;display:flex;align-items:flex-start;justify-content:center;padding:4vh 2vw;overflow:auto}
+.ib-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99990;display:flex;align-items:flex-start;justify-content:center;padding:4vh 2vw;overflow:auto}
 .ib-modal{background:#fff;border-radius:16px;width:100%;max-width:1200px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.22)}
 .ib-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;border-bottom:1px solid #e8e6e0;flex-shrink:0;gap:10px;flex-wrap:wrap}
 .ib-modal-title{font-size:15px;font-weight:600;color:#1a1a18}
@@ -105,7 +106,7 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
 .ib-tbl td input:focus,.ib-tbl td select:focus{background:#ebf3ff;color:#1a4a8a}
 .ib-tbl tbody tr:hover td{background:#fafaf8}
 /* Date picker popover */
-.ib-datepicker{position:fixed;z-index:6000;background:#fff;border:1px solid #d0cdc6;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:10px;min-width:220px;user-select:none}
+.ib-datepicker{position:fixed;z-index:99995;background:#fff;border:1px solid #d0cdc6;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.15);padding:10px;min-width:220px;user-select:none}
 .ib-dp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .ib-dp-nav{background:none;border:none;cursor:pointer;font-size:18px;color:#3a7bd5;padding:2px 6px;border-radius:6px;line-height:1}
 .ib-dp-nav:hover{background:#ebf3ff}
@@ -268,6 +269,11 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
       <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       <span id="ui-settings-btn">Réglages</span>
     </button>
+    <div class="sync-toggle" id="sync-toggle-wrap" onclick="toggleSyncStart()" style="display:none">
+      <input type="checkbox" id="sync-start-cb" onclick="event.stopPropagation();toggleSyncStart()">
+      <span class="sync-lbl" id="ui-sync-lbl" data-i18n="syncStart">⏱ Démarrage minute entière</span>
+      <span class="sync-count" id="sync-countdown" style="display:none"></span>
+    </div>
     <button class="top-btn" onclick="toggleFullscreen()">
       <svg class="icon" id="fullscreen-icon" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
       <span id="fullscreen-label">Plein écran</span>
@@ -297,7 +303,7 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
       <span class="reading-name" id="ui-reading-name" style="color:#7a6000;font-size:13px;font-weight:600;flex-shrink:0">Temps de lecture</span>
       <button onclick="showHelp('reading')" class="help-btn" title="Aide">?</button>
       <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
-        <input type="number" class="reading-input" id="inp-reading" min="1" max="60" value="5" oninput="updateReadingSub()">
+        <input type="number" class="reading-input" id="inp-reading" min="0" max="60" value="5" oninput="updateReadingSub();onReadingDurChange(this.value)">
         <span class="reading-input-label" style="font-size:13px;color:#888">min</span>
       </div>
     </div>
@@ -512,6 +518,7 @@ var UI={
     confirm:'Confirmer',
     settingsBtn:'Réglages',
     fullscreen:'Plein écran',
+    syncStart:'Démarrage minute entière',
     exitFullscreen:'Quitter plein écran',
     quit:'Quitter',
     panelTitle:'Réglages',
@@ -567,6 +574,7 @@ var UI={
     confirm:'Confirm',
     settingsBtn:'Settings',
     fullscreen:'Full screen',
+    syncStart:'Whole minute start',
     exitFullscreen:'Exit full screen',
     quit:'Quit',
     panelTitle:'Settings',
@@ -604,6 +612,9 @@ function t(key,...args){
 
 function setUILang(lang){
   uiLang=lang;
+  // Changing UI language also changes announcement language
+  // (but changing voice alone does NOT change UI language — see setLang)
+  announceLang=lang;
   savePrefs();
   ['fr','en'].forEach(l=>{
     const btn=document.getElementById('uilang-'+l);if(!btn)return;
@@ -612,8 +623,14 @@ function setUILang(lang){
     btn.style.borderColor=l===lang?'#3a7bd5':'#d0cdc6';
     btn.style.fontWeight=l===lang?'600':'400';
   });
+  // Update announce language buttons to reflect new language
+  ['fr','en'].forEach(l=>{
+    const b=document.getElementById('lang-'+l);if(!b)return;
+    b.style.background=l===lang?'#3a7bd5':'#fff';
+    b.style.color=l===lang?'#fff':'#888';
+  });
+  populateVoices();
   applyUILang();
-  // Re-render dynamic content
   renderExamList();
   if(panelOpen)buildPanelTab(currentTab);
 }
@@ -644,11 +661,17 @@ function applyUILang(){
   set('ui-tab-add',t('tabAdd'));
   // Fullscreen label (only if not currently fullscreen)
   if(!document.fullscreenElement)set('fullscreen-label',t('fullscreen'));
+  // Sync start label
+  const syncLbl=document.getElementById('ui-sync-lbl');
+  if(syncLbl)syncLbl.textContent='⏱ '+t('syncStart');
   // Voice default option
   const vd=document.getElementById('ui-voice-default');if(vd)vd.textContent=t('voiceDefault');
   // Reading sub
-  const rv=parseInt(document.getElementById('inp-reading')?.value)||5;
-  const rs=document.getElementById('reading-sub');if(rs)rs.textContent=t('readingSub',rv);
+  const rv=parseInt(document.getElementById('inp-reading')?.value);
+  const rs=document.getElementById('reading-sub');if(rs){
+    if(!isNaN(rv)&&rv===0)rs.textContent=(uiLang==='fr'?'Désactivé — entrez une durée pour activer':'Disabled — enter a duration to enable');
+    else rs.textContent=t('readingSub',isNaN(rv)?5:rv);
+  }
   // Pause buttons
   syncPauseButtons();
   // Start-all-waiting button
@@ -743,14 +766,10 @@ function refreshMilestones(t){
 }
 
 // ── SETUP UI ──
-function updateReadingSub(){
-  const v=parseInt(document.getElementById('inp-reading').value)||5;
-  const rs=document.getElementById('reading-sub');
-  if(rs)rs.textContent=t('readingSub',v);
-}
 function toggleExamReading(eid){
   const def=examDefs.find(e=>e.id===eid);if(!def)return;
   def.readingOn=def.readingOn===false?true:false;
+  def._readingExplicitOff=(def.readingOn===false); // track manual toggle
   const sw=document.getElementById('sw-reading-'+eid);
   const lbl=document.getElementById('reading-label-'+eid);
   if(sw)sw.classList.toggle('on',def.readingOn!==false);
@@ -762,10 +781,113 @@ function toggleReadingDefault(e){
   // Reading is now per-exam — global toggle removed
 }
 function updateReadingSub(){
-  const v=parseInt(document.getElementById('inp-reading')?.value)||5;
+  const v=parseInt(document.getElementById('inp-reading')?.value)||0;
   const el=document.getElementById('reading-sub');
-  if(el)el.textContent=(uiLang==='fr'?v+' minute'+(v>1?'s':'')+' avant le début':v+' minute'+(v>1?'s':'')+' before start');
+  if(el){
+    if(v===0)el.textContent=(uiLang==='fr'?'Désactivé — entrez une durée pour activer':'Disabled — enter a duration to enable');
+    else el.textContent=(uiLang==='fr'?v+' minute'+(v>1?'s':'')+' avant le début':v+' minute'+(v>1?'s':'')+' before start');
+  }
 }
+
+// Reading duration 0 → disable all per-exam reading toggles
+function onReadingDurChange(val){
+  const v=parseInt(val)||0;
+  try{
+    const p=JSON.parse(localStorage.getItem('hl-prefs')||'{}');
+    p.readingDefaultMin=v;
+    localStorage.setItem('hl-prefs',JSON.stringify(p));
+  }catch(e){}
+  if(v===0){
+    examDefs.forEach(def=>{
+      def.readingOn=false;
+      const sw=document.getElementById('sw-reading-'+def.id);
+      if(sw)sw.classList.remove('on');
+      const lbl=document.getElementById('reading-label-'+def.id);
+      if(lbl)lbl.textContent=t('readingName')+'  —';
+    });
+  }
+  // Re-enable reading for exams that don't have an explicit override
+  // when user enters a value > 0 (only if they were disabled by the 0 entry,
+  // indicated by def.readingOn===false and no explicit user toggle)
+  if(v>0){
+    examDefs.forEach(def=>{
+      if(def.readingOn===false&&!def._readingExplicitOff){
+        def.readingOn=true;
+        const sw=document.getElementById('sw-reading-'+def.id);
+        if(sw)sw.classList.add('on');
+        const lbl=document.getElementById('reading-label-'+def.id);
+        if(lbl)lbl.textContent=t('readingName')+'  ✓';
+      }
+    });
+  }
+  updateReadingSub();
+}
+
+// ── SYNC START (start at full minute) ──
+let _syncQueue=new Set(); // exam IDs queued to start at next :00, or 'all'
+let _syncInterval=null;
+let syncStartEnabled=false;
+
+function toggleSyncStart(){
+  syncStartEnabled=!syncStartEnabled;
+  const wrap=document.getElementById('sync-toggle-wrap');
+  const cb=document.getElementById('sync-start-cb');
+  if(wrap)wrap.classList.toggle('active',syncStartEnabled);
+  if(cb)cb.checked=syncStartEnabled;
+  if(!syncStartEnabled){_syncQueue.clear();_stopSyncCountdown();_refreshSyncButtons();}
+}
+
+function _stopSyncCountdown(){
+  if(_syncInterval){clearInterval(_syncInterval);_syncInterval=null;}
+  const cd=document.getElementById('sync-countdown');
+  if(cd)cd.style.display='none';
+}
+
+function _startSyncCountdownIfNeeded(){
+  if(_syncQueue.size===0){_stopSyncCountdown();return;}
+  if(_syncInterval)return;
+  const cd=document.getElementById('sync-countdown');
+  function tick(){
+    const now=new Date();
+    const secsLeft=60-now.getSeconds();
+    if(cd){cd.textContent=secsLeft+'s';cd.style.display='block';}
+    if(now.getSeconds()===0){
+      _stopSyncCountdown();
+      const queue=new Set(_syncQueue);
+      _syncQueue.clear();
+      _refreshSyncButtons();
+      if(queue.has('all')){launchAllWaiting();}
+      else{queue.forEach(id=>launchExam(id));}
+    }
+  }
+  tick();
+  _syncInterval=setInterval(tick,250);
+}
+
+function _refreshSyncButtons(){
+  // "Start all" button
+  const allBtn=document.getElementById('start-all-waiting-btn');
+  if(allBtn){
+    const pend=_syncQueue.has('all');
+    allBtn.style.opacity=pend?'0.55':'1';
+    allBtn.style.outline=pend?'2px solid #fff':'none';
+    allBtn.style.outlineOffset=pend?'2px':'0';
+  }
+  // Per-column start buttons
+  exams.forEach(e=>{
+    const btn=document.querySelector('.col-start-btn[onclick="syncLaunchExam('+e.id+')"]');
+    if(!btn)return;
+    const pend=_syncQueue.has(e.id)||_syncQueue.has('all');
+    btn.style.opacity=pend?'0.55':'1';
+    btn.style.outline=pend?'2px solid #3a7bd5':'none';
+    btn.style.outlineOffset=pend?'2px':'0';
+  });
+}
+
+function _cancelSyncStart(){
+  _syncQueue.clear();_stopSyncCountdown();_refreshSyncButtons();
+}
+
 function setAudioMode(mode){
   audioMode=mode;
   savePrefs();
@@ -971,10 +1093,19 @@ function ibText(type, event, lang, exam, now, timer){
   }
 
   if(event==='examStart'){
-    if(type!=='mcq')return null;
+    // For MCQ: always announce (no reading time for MCQ)
+    if(type==='mcq')
+      return fr
+        ?`Vous pouvez commencer à écrire. Il est ${heure}.`
+        :`You may now start the examination. The time now is ${heureEn}.`;
+    // For other IB types: only announce if the exam has NO reading time.
+    // When reading time is active, readingEnd already announces the start — don't double-announce.
+    // Detect: if exam has reading, examStart is called at the same tick as readingEnd → skip.
+    // We use exam.readingOn as the flag (false = no reading, true = had reading)
+    if(exam&&exam.readingOn===true)return null;
     return fr
-      ?`Vous pouvez commencer à écrire. Il est ${heure}.`
-      :`You may now start the examination. The time now is ${heureEn}.`;
+      ?`L'épreuve commence maintenant. Vous avez ${dur}. Vous pouvez commencer à écrire. Il est ${heure}.`
+      :`The examination begins now. You have ${dur}. You may start to write. The time now is ${heureEn}.`;
   }
 
   if(event==='alert30'){
@@ -1752,8 +1883,15 @@ function ibParseDate(s){
   return m?{d:parseInt(m[1]),mo:parseInt(m[2]),yr:m[3]?parseInt(m[3]):null}:null;
 }
 function ibDateToInt(s){const p=ibParseDate(s);return p?((p.yr||0)*10000+p.mo*100+p.d):null;}
-function ibDefaultDateFrom(){const n=new Date();return String(n.getDate()).padStart(2,'0')+'/'+String(n.getMonth()+1).padStart(2,'0')+'/'+n.getFullYear();}
-function ibDefaultDateTo(){const n=new Date(Date.now()+7*86400000);return String(n.getDate()).padStart(2,'0')+'/'+String(n.getMonth()+1).padStart(2,'0')+'/'+n.getFullYear();}
+let _ibLastDateFrom='',_ibLastDateTo='';
+function ibDefaultDateFrom(){
+  if(_ibLastDateFrom)return _ibLastDateFrom;
+  const n=new Date();return String(n.getDate()).padStart(2,'0')+'/'+String(n.getMonth()+1).padStart(2,'0')+'/'+n.getFullYear();
+}
+function ibDefaultDateTo(){
+  if(_ibLastDateTo)return _ibLastDateTo;
+  const n=new Date(Date.now()+7*86400000);return String(n.getDate()).padStart(2,'0')+'/'+String(n.getMonth()+1).padStart(2,'0')+'/'+n.getFullYear();
+}
 
 // ── Picker filter ──
 function ibPickerFilter(eid){
@@ -1764,6 +1902,7 @@ function ibPickerFilter(eid){
   const lvl=document.getElementById('ib-pf-lvl-'+eid)?.value||'';
   const sess=document.getElementById('ib-pf-sess-'+eid)?.value||'';
   def._ibDateFrom=dateFrom; def._ibDateTo=dateTo; def._ibQuery=q;
+  if(dateFrom)_ibLastDateFrom=dateFrom; if(dateTo)_ibLastDateTo=dateTo;
 
   // Mark active
   ['ib-pf-date-'+eid,'ib-pf-date2-'+eid,'ib-pf-q-'+eid,'ib-pf-lvl-'+eid,'ib-pf-sess-'+eid].forEach(id=>{
@@ -1809,44 +1948,108 @@ function ibPickerFilter(eid){
   }).join('');
 }
 
+// Resolve reading state when selecting an IB exam
+// Returns: true/false directly if no prompt needed, or calls callback after user answers
+function ibResolveReading(hasReading, typeFR, fr, callback){
+  // callback({readingOn:bool, newMins:int|null})
+  // newMins: if set, update the global reading duration field too
+  const globalMins=parseInt(document.getElementById('inp-reading')?.value)||0;
+  const isIBType=!!(typeFR&&typeFR.trim());
+
+  // QCM or non-IB: no prompt, no reading change
+  if(!isIBType||!hasReading){
+    callback({readingOn:false,newMins:null});
+    return;
+  }
+
+  // IB type that requires reading:
+  // Case 1: globalMins === 5 → already correct, nothing to do
+  if(globalMins===5){
+    callback({readingOn:true,newMins:null});
+    return;
+  }
+
+  // Case 2: globalMins === 0 → reading disabled globally, ask if want to enable (and set to 5 min)
+  if(globalMins===0){
+    _ibReadingPrompt(
+      fr?'Ce type d\'épreuve requiert un temps de lecture.\nActiver le temps de lecture (5 min) pour cet examen ?'
+        :'This paper type requires reading time.\nEnable reading time (5 min) for this paper?',
+      fr?'Activer':'Enable',
+      fr?'Non':'No',
+      fr,
+      ()=>callback({readingOn:true,newMins:5}),
+      ()=>callback({readingOn:false,newMins:null})
+    );
+    return;
+  }
+
+  // Case 3: globalMins ≠ 0 and ≠ 5 → ask if want to change to 5 min
+  _ibReadingPrompt(
+    fr?'Ce type d\'épreuve prévoit habituellement 5 min de lecture.\nLe réglage actuel est '+globalMins+' min. Changer à 5 min pour cet examen ?'
+      :'This paper type typically uses 5 min reading time.\nCurrent setting is '+globalMins+' min. Change to 5 min for this paper?',
+    fr?'Changer à 5 min':'Change to 5 min',
+    fr?'Garder '+globalMins+' min':'Keep '+globalMins+' min',
+    fr,
+    ()=>callback({readingOn:true,newMins:5}),
+    ()=>callback({readingOn:true,newMins:null})
+  );
+}
+
+function _ibReadingPrompt(msg, labelYes, labelNo, fr, onYes, onNo){
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:99999';
+  const box=document.createElement('div');
+  box.style.cssText='background:#fff;border-radius:14px;padding:20px;max-width:320px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.2);font-family:inherit';
+  const p=document.createElement('p');
+  p.style.cssText='font-size:14px;color:#1a1a18;margin:0 0 16px;line-height:1.5;white-space:pre-line';
+  p.textContent=msg;
+  const row=document.createElement('div');row.style.cssText='display:flex;gap:8px';
+  const bNo=document.createElement('button');
+  bNo.style.cssText='flex:1;padding:9px;border:1px solid #d0cdc6;border-radius:9px;background:#fff;font-size:13px;font-family:inherit;cursor:pointer';
+  bNo.textContent=labelNo;
+  const bYes=document.createElement('button');
+  bYes.style.cssText='flex:1;padding:9px;border:none;border-radius:9px;background:#3a7bd5;color:#fff;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer';
+  bYes.textContent=labelYes;
+  bNo.onclick=()=>{document.body.removeChild(overlay);onNo();};
+  bYes.onclick=()=>{document.body.removeChild(overlay);onYes();};
+  row.appendChild(bNo);row.appendChild(bYes);
+  box.appendChild(p);box.appendChild(row);
+  overlay.appendChild(box);document.body.appendChild(overlay);
+}
+
 function ibPickerSelect(eid,rowIdx){
   const def=examDefs.find(e=>e.id===eid);if(!def)return;
   const rows=ibGetRows();
   const r=rows[rowIdx];if(!r)return;
   const fr=announceLang==='fr'||uiLang==='fr';
 
-  // Build title: Subject Paper Level
   const subj=fr?r.mFR:r.mEN;
   const lvlDisp=fr?r.lvl:(IB_LEVEL_FR2EN[r.lvl]||r.lvl);
   const title=subj+' '+r.paper+' '+lvlDisp;
-
-  // Set minutes from duration
   const mins=parseInt(r.duree)||0;
-
-  // Map IB type → timer ibType and reading
   const ibType=ibTypeToTimerType(r.typeFR);
   const hasReading=ibTypeHasReading(r.typeFR);
 
-  // Apply to examDef — set duration BEFORE renderExamList reads it back
-  // We must set _h/_m/_s AFTER renderExamList saves the DOM (which happens at render start)
-  // So we set title/ibType/readingOn now, re-render, then directly set the input values
   def.title=title;
   def.ibType=ibType;
-  def.readingOn=hasReading;
   def._ibSelected=subj+' '+r.paper+' '+lvlDisp;
 
-  // Re-render (this will save old _m/_h/_s from DOM, then build new DOM with old values)
-  renderExamList();
-
-  // Now directly set the duration inputs to the IB exam duration
-  const inpH=document.getElementById('inp-h-'+eid);
-  const inpM=document.getElementById('inp-m-'+eid);
-  const inpS=document.getElementById('inp-s-'+eid);
-  if(inpH){inpH.value='0';def._h='0';}
-  if(inpM){inpM.value=String(mins);def._m=String(mins);}
-  if(inpS){inpS.value='0';def._s='0';}
-
-  checkStart();
+  ibResolveReading(hasReading, r.typeFR, fr, function(res){
+    def.readingOn=res.readingOn;
+    // If a new reading duration was suggested and accepted, apply it globally
+    if(res.newMins!==null){
+      const inpR=document.getElementById('inp-reading');
+      if(inpR){inpR.value=String(res.newMins);onReadingDurChange(res.newMins);}
+    }
+    renderExamList();
+    const inpH=document.getElementById('inp-h-'+eid);
+    const inpM=document.getElementById('inp-m-'+eid);
+    const inpS=document.getElementById('inp-s-'+eid);
+    if(inpH){inpH.value='0';def._h='0';}
+    if(inpM){inpM.value=String(mins);def._m=String(mins);}
+    if(inpS){inpS.value='0';def._s='0';}
+    checkStart();
+  });
 }
 
 function ibClearSelection(eid){
@@ -1981,13 +2184,11 @@ function ibShowDatePicker(input,eid,which){
     const rect=input.getBoundingClientRect();
     const scrollY=window.scrollY||document.documentElement.scrollTop||0;
     const scrollX=window.scrollX||document.documentElement.scrollLeft||0;
-    let top=rect.bottom+scrollY+4;
-    let left=rect.left+scrollX;
+    let top=rect.bottom+scrollY+4;let left=rect.left+scrollX;
     if(rect.bottom+200>window.innerHeight) top=rect.top+scrollY-dp.offsetHeight-4;
     const w=dp.offsetWidth||220;
     if(left+w>window.innerWidth-8) left=Math.max(4,window.innerWidth-w-8);
-    dp.style.top=top+'px';
-    dp.style.left=left+'px';
+    dp.style.top=top+'px';dp.style.left=left+'px';
   });
 
   // Close on outside click
@@ -2088,8 +2289,7 @@ function ibDpNav(dir){
       const rect=_ibDpTarget.input.getBoundingClientRect();
       const scrollY=window.scrollY||document.documentElement.scrollTop||0;
       const scrollX=window.scrollX||document.documentElement.scrollLeft||0;
-      let top=rect.bottom+scrollY+4;
-      let left=rect.left+scrollX;
+      let top=rect.bottom+scrollY+4;left=rect.left+scrollX;
       if(rect.bottom+200>window.innerHeight) top=rect.top+scrollY-dp.offsetHeight-4;
       const w=dp.offsetWidth||220;
       if(left+w>window.innerWidth-8) left=Math.max(4,window.innerWidth-w-8);
@@ -2644,8 +2844,9 @@ function buildExamObj(def, readingOnOverride, readingMinsOverride){
   const base=getExamBase(def.id);if(base<=0)return null;
   const title=(document.getElementById('inp-title-'+def.id)?.value||'').trim()||('Examen '+(exams.length+1));
   const rOn = readingOnOverride !== undefined ? readingOnOverride : (def.readingOn !== false);
-  const rMins = readingMinsOverride !== undefined ? readingMinsOverride : (parseInt(document.getElementById('inp-reading')?.value)||5);
-  const rTotal = rMins*60;
+  const _globalReadingMins = parseInt(document.getElementById('inp-reading')?.value);
+  const rMins = readingMinsOverride !== undefined ? readingMinsOverride : (isNaN(_globalReadingMins)?5:_globalReadingMins);
+  const rTotal = (rOn && rMins>0) ? rMins*60 : 0;
 
   // Read current p1/p2 values from DOM if available
   const p1str=(document.getElementById('inp-p1-'+def.id)?.value||def.p1||'25%');
@@ -2719,6 +2920,7 @@ function startAll(){
   document.getElementById('timer-view').classList.add('active');
   document.getElementById('exam-section').style.display='block';
   document.getElementById('top-bar').classList.add('visible');
+  document.getElementById('sync-toggle-wrap').style.display='flex';
   document.getElementById('quit-btn').classList.add('visible');
   document.getElementById('live-clock').style.display='block';
   document.getElementById('live-clock').textContent=nowClock();
@@ -2813,7 +3015,7 @@ function colHTML(exam){
     inner=`${readingPreview}
       ${timersPreview}
       <div style="margin-top:auto;padding-top:12px">
-        <button class="col-start-btn" style="width:100%;justify-content:center" onclick="launchExam(${exam.id})">
+        <button class="col-start-btn" style="width:100%;justify-content:center" onclick="syncLaunchExam(${exam.id})">
           <svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:#fff"><polygon points="5 3 19 12 5 21"/></svg>
           ${t('start')}
         </button>
@@ -2873,13 +3075,39 @@ function refreshGlobalControls(){
     if(!btn){
       btn=document.createElement('button');
       btn.className='ctrl-btn green';btn.id='start-all-waiting-btn';
-      btn.onclick=launchAllWaiting;
+      btn.onclick=syncLaunchAllWaiting;
       const icon='<svg class="icon" viewBox="0 0 24 24" style="stroke:none;fill:#fff"><polygon points="5 3 19 12 5 21"/></svg>';
       btn.innerHTML=icon+' '+t('startAllWaiting');
       container.appendChild(btn);
     }
   } else {
     if(btn)btn.remove();
+  }
+}
+
+function syncLaunchAllWaiting(){
+  if(!syncStartEnabled){launchAllWaiting();return;}
+  if(_syncQueue.has('all')){
+    // Second click = cancel
+    _syncQueue.clear();
+    _stopSyncCountdown();_refreshSyncButtons();
+  } else {
+    _syncQueue.clear();_syncQueue.add('all');
+    _startSyncCountdownIfNeeded();_refreshSyncButtons();
+  }
+}
+
+function syncLaunchExam(examId){
+  if(!syncStartEnabled){launchExam(examId);return;}
+  if(_syncQueue.has(examId)){
+    // Second click = cancel this exam
+    _syncQueue.delete(examId);
+    if(_syncQueue.size===0)_stopSyncCountdown();
+    _refreshSyncButtons();
+  } else {
+    _syncQueue.delete('all'); // individual supersedes "all"
+    _syncQueue.add(examId);
+    _startSyncCountdownIfNeeded();_refreshSyncButtons();
   }
 }
 
@@ -3099,6 +3327,7 @@ function buildPanelTab(tab){
 }
 
 // ── VOICE & ALERTS TAB ──
+function rebuildVoicePanel(){if(currentTab==='voice')buildVoiceAlertsPanel();}
 function buildVoiceAlertsPanel(){
   const fr=uiLang==='fr';
   const body=document.getElementById('panel-body');
@@ -3147,6 +3376,15 @@ function buildVoiceAlertsPanel(){
       });
     }
     h+='</select></div></div>';
+  }
+
+  // IB mode toggle (voice only)
+  if(audioMode==='voice'){
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;background:#f0f6ff;border:1px solid #c0d4ec">';
+    h+='<div style="flex:1"><div style="font-size:13px;font-weight:600;color:#1a4a8a">'+(fr?'Annonces IB officielles':'Official IB announcements')+'</div>';
+    h+='<div style="font-size:11px;color:#666;margin-top:2px">'+(fr?'Textes officiels du Baccalauréat International':'Official IB Diploma Programme texts')+'</div></div>';
+    h+='<div class="sw'+(ibMode?' on':'')+'" id="panel-sw-ib" onclick="toggleIBMode();rebuildVoicePanel()" style="flex-shrink:0"></div>';
+    h+='</div>';
   }
 
   // Alerts
@@ -3291,6 +3529,7 @@ function removeRunningExam(examId){
   } else {
     // Waiting: remove immediately, no need for confirm
     exams=exams.filter(e=>e.id!==examId);
+    examDefs=examDefs.filter(e=>e.id!==examId);
     const col=document.getElementById('col-'+examId);if(col)col.remove();
     refreshGlobalControls();
     if(panelOpen&&currentTab==='adjust')buildAdjustPanel();
@@ -3300,6 +3539,7 @@ function removeRunningExam(examId){
 
 function confirmRemoveRunningExam(examId){
   exams=exams.filter(e=>e.id!==examId);
+  examDefs=examDefs.filter(e=>e.id!==examId);
   const col=document.getElementById('col-'+examId);if(col)col.remove();
   refreshGlobalControls();
   if(panelOpen&&currentTab==='adjust')buildAdjustPanel();
@@ -3327,7 +3567,10 @@ function adjReading(examId,d){
 
 // ── ADD EXAM TAB ──
 function buildAddPanel(){
-  newExamTog={main:true,t25:true,t50:true};newExamReadingOn=true;
+  newExamTog={main:true,t25:true,t50:true};
+  // Reading on only if global reading duration > 0
+  const _globalRMin=parseInt(document.getElementById('inp-reading')?.value);
+  newExamReadingOn=(!isNaN(_globalRMin)&&_globalRMin===0)?false:true;
   document.getElementById('panel-body').innerHTML=`
     <div class="panel-section-title">${t('newExamTitle')}</div>
     <div class="panel-field">
@@ -3369,12 +3612,12 @@ function buildAddPanel(){
     </div>
     <div class="panel-divider"></div>
     <div class="panel-section-title">${t('readingTimeLabel')}</div>
-    <div class="panel-reading-row on" id="new-reading-row" onclick="toggleNewReading(event)">
+    <div class="panel-reading-row ${newExamReadingOn?'on':''}" id="new-reading-row" onclick="toggleNewReading(event)">
       <div><div class="panel-reading-name">${t('readingName')}</div></div>
       <div class="panel-reading-ctrls" onclick="event.stopPropagation()">
-        <input type="number" class="panel-reading-inp" id="new-reading-min" min="1" max="60" value="5">
+        <input type="number" class="panel-reading-inp" id="new-reading-min" min="0" max="60" value="${parseInt(document.getElementById('inp-reading')?.value)||5}">
         <span class="panel-reading-label">min</span>
-        <div class="sw on" id="new-sw-reading" onclick="toggleNewReading(event)"></div>
+        <div class="sw ${newExamReadingOn?'on':''}" id="new-sw-reading" onclick="toggleNewReading(event)"></div>
       </div>
     </div>
     <div class="panel-divider"></div>
@@ -3427,15 +3670,22 @@ function buildAddPanelSelect(rowIdx){
   const mins=parseInt(r.duree)||0;
   const ibType=ibTypeToTimerType(r.typeFR);
   const hasReading=ibTypeHasReading(r.typeFR);
-  // Fill fields
+  // Fill title and duration immediately
   const ti=document.getElementById('new-title');if(ti)ti.value=title;
   const nh=document.getElementById('new-h');if(nh)nh.value='0';
   const nm=document.getElementById('new-m');if(nm)nm.value=String(mins);
   const ns=document.getElementById('new-s');if(ns)ns.value='0';
-  // Reading
-  newExamReadingOn=hasReading;
-  const row=document.getElementById('new-reading-row'),sw=document.getElementById('new-sw-reading'),inp=document.getElementById('new-reading-min');
-  if(row)row.classList.toggle('on',hasReading);if(sw)sw.classList.toggle('on',hasReading);if(inp)inp.disabled=!hasReading;
+  // Resolve reading with possible prompt
+  ibResolveReading(hasReading, r.typeFR, fr, function(res){
+    newExamReadingOn=res.readingOn;
+    if(res.newMins!==null){
+      const inpR=document.getElementById('inp-reading');
+      if(inpR){inpR.value=String(res.newMins);onReadingDurChange(res.newMins);}
+    }
+    const row=document.getElementById('new-reading-row'),sw=document.getElementById('new-sw-reading'),inp=document.getElementById('new-reading-min');
+    if(row)row.classList.toggle('on',res.readingOn);if(sw)sw.classList.toggle('on',res.readingOn);if(inp)inp.disabled=false;
+    checkNewExam();
+  });
   // Hide results
   const res=document.getElementById('new-ib-res');if(res)res.innerHTML='';
   checkNewExam();
@@ -3502,6 +3752,11 @@ function confirmNewExam(){
   if(newExamTog.t50){const total=Math.round(base*(1+r2));timers.push({id:`${eid}-t50`,label:'+'+l2,total,left:total,done:false,alerted:false,alerted30:false,endAlerted:false,ratio:1+r2,r:BASE_RADII[Math.min(ri++,2)]});}
   const exam={id:eid,title,timers,status:'waiting',readingOn:rOn,readingTotal:rTotal,readingLeft:rTotal,readingAlerted:false};
   exams.push(exam);
+  // Also persist to examDefs so it survives a quit
+  examDefs.push({id:eid,title,_h:String(Math.floor(base/3600)),_m:String(Math.floor((base%3600)/60)),_s:String(base%60),
+    readingOn:rOn,_readingMin:String(rMins),ibType:exam.ibType||'ns',
+    tog:{main:newExamTog.main,t25:newExamTog.t25,t50:newExamTog.t50},
+    p1:p1str,p2:p2str});
   // Append column to DOM
   const cols=document.getElementById('exams-columns');
   const div=document.createElement('div');div.innerHTML=colHTML(exam);
@@ -3612,7 +3867,7 @@ function confirmQuit(){
   const existing=document.getElementById('quit-confirm-overlay');
   if(existing){existing.remove();return;}
   const overlay=document.createElement('div');overlay.id='quit-confirm-overlay';
-  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:99999';
   const box=document.createElement('div');box.style.cssText='background:#fff;border-radius:16px;padding:24px;max-width:320px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.2)';
   const p1=document.createElement('p');p1.style.cssText='font-size:16px;font-weight:600;color:#1a1a18;margin:0 0 8px';p1.textContent=t('confirmQuitTitle');
   const p2=document.createElement('p');p2.style.cssText='font-size:14px;color:#666;margin:0 0 20px';p2.textContent=t('confirmQuitMsg');
@@ -3632,7 +3887,13 @@ function doConfirmedQuit(){
   document.getElementById('timer-view').classList.remove('active');
   document.getElementById('live-clock').style.display='none';
   document.getElementById('setup-panel').style.display='block';
+  renderExamList(); // refresh exam cards including any added during timers
+  checkStart();
+  const sp=document.getElementById('setup-panel');if(sp)sp.scrollTop=0;
   document.getElementById('top-bar').classList.remove('visible');
+  document.getElementById('top-bar').style.display='';
+  document.getElementById('sync-toggle-wrap').style.display='none';
+  _cancelSyncStart();
   document.getElementById('quit-btn').classList.remove('visible');
   if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
   syncPauseButtons();
@@ -3682,6 +3943,15 @@ function updateLogoPreview(){
     if(typeof p.ibMode==='boolean')ibMode=p.ibMode;
     if(p.alertSecs)alertSecs=p.alertSecs;
     if(p.ALERT_30)ALERT_30=p.ALERT_30;
+    // Restore reading default duration
+    if(p.readingDefaultMin!==undefined){
+      const el=document.getElementById('inp-reading');
+      if(el){
+        el.value=p.readingDefaultMin;
+        // If stored value was 0, disable per-exam reading (deferred to after DOM ready)
+        if(p.readingDefaultMin===0)setTimeout(()=>onReadingDurChange(0),100);
+      }
+    }
     // Extra time percentages default
     if(p.defaultP1)window._defaultP1=p.defaultP1;
     if(p.defaultP2)window._defaultP2=p.defaultP2;
@@ -3725,7 +3995,7 @@ addExam();
   const inpRead=document.getElementById('inp-reading');
   if(togRow)togRow.classList.toggle('on',readingOn);
   if(swRead)swRead.classList.toggle('on',readingOn);
-  if(inpRead)inpRead.disabled=!readingOn;
+  // inp-reading is always editable — disabled state removed
   // IB mode (only if voice is active)
   if(ibMode){const sw=document.getElementById('sw-ib');if(sw)sw.classList.add('on');renderExamList();}
   // Apply default extra time percentages to first exam
