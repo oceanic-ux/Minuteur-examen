@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Loto - Tirage Automatique</title>
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Loto PWA">
+    
+    <style>
+        :root {
+            --bg-color: #f4f4f9;
+            --panel-bg: #ffffff;
+            --grid-bg-empty: #e0e0e0;
+            --grid-text-empty: #a0a0a0;
+            --drawn-bg: #ffeb3b;
+            --drawn-text: #000000;
+            --btn-draw: #4caf50;
+            --btn-reset: #f44336;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            height: 100vh;
+            display: flex;
+            padding: 20px;
+            gap: 20px;
+            overflow: hidden;
+        }
+
+        /* Panneau de gauche : Contrôles et Dernier Numéro */
+        #control-panel {
+            flex: 1;
+            background: var(--panel-bg);
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            padding: 30px;
+            min-width: 300px;
+        }
+
+        #last-number-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #last-number-label {
+            font-size: 1.2rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+
+        #last-number {
+            font-size: 10rem;
+            font-weight: bold;
+            color: #333;
+            line-height: 1;
+        }
+
+        .buttons-container {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        button {
+            width: 100%;
+            padding: 18px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.1s, filter 0.2s;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        #btn-draw {
+            background-color: var(--btn-draw);
+            color: white;
+            font-size: 1.6rem;
+            box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3);
+        }
+
+        #btn-reset {
+            background-color: var(--btn-reset);
+            color: white;
+            font-size: 1rem;
+            padding: 12px;
+            opacity: 0.8;
+        }
+
+        #btn-reset:hover {
+            opacity: 1;
+        }
+
+        /* Panneau de droite : La Grille */
+        #grid-panel {
+            flex: 2.5;
+            background: var(--panel-bg);
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            padding: 20px;
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            grid-template-rows: repeat(9, 1fr);
+            gap: 8px;
+        }
+
+        .cell {
+            background-color: var(--grid-bg-empty);
+            color: var(--grid-text-empty);
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.6rem;
+            font-weight: 600;
+            transition: background-color 0.1s, color 0.1s;
+        }
+
+        .cell.drawn {
+            background-color: var(--drawn-bg);
+            color: var(--drawn-text);
+            box-shadow: inset 0 0 0 2px rgba(0,0,0,0.05);
+            font-weight: 800;
+        }
+
+        /* Optimisation pour le mode Portrait ou écrans étroits au cas où */
+        @media (max-aspect-ratio: 1/1) {
+            body {
+                flex-direction: column;
+                overflow: auto;
+            }
+            #control-panel {
+                min-height: 350px;
+            }
+            #grid-panel {
+                height: 60vh;
+                min-height: 450px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="control-panel">
+        <div id="last-number-container">
+            <div id="last-number-label">Dernier tiré</div>
+            <div id="last-number">--</div>
+        </div>
+        
+        <div class="buttons-container">
+            <button id="btn-draw">TIRER (Espace)</button>
+            <button id="btn-reset">Recommencer à zéro</button>
+        </div>
+    </div>
+
+    <div id="grid-panel" id="loto-grid">
+        </div>
+
+    <script>
+        // Variables d'état
+        let drawnNumbers = [];
+        const TOTAL_NUMBERS = 90;
+
+        // Éléments DOM
+        const gridPanel = document.getElementById('grid-panel');
+        const lastNumberDisplay = document.getElementById('last-number');
+        const btnDraw = document.getElementById('btn-draw');
+        const btnReset = document.getElementById('btn-reset');
+
+        // Initialisation de la grille 1-90
+        function createGrid() {
+            gridPanel.innerHTML = '';
+            for (let i = 1; i <= TOTAL_NUMBERS; i++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                cell.id = `cell-${i}`;
+                cell.textContent = i;
+                gridPanel.appendChild(cell);
+            }
+        }
+
+        // Sauvegarde dans le LocalStorage
+        function saveState() {
+            localStorage.setItem('loto_drawn_numbers', JSON.stringify(drawnNumbers));
+        }
+
+        // Chargement depuis le LocalStorage (persistance automatique)
+        function loadState() {
+            const saved = localStorage.getItem('loto_drawn_numbers');
+            if (saved) {
+                drawnNumbers = JSON.parse(saved);
+                // Appliquer l'état visuel
+                drawnNumbers.forEach(num => {
+                    const cell = document.getElementById(`cell-${num}`);
+                    if (cell) cell.classList.add('drawn');
+                });
+                // Afficher le dernier numéro tiré
+                if (drawnNumbers.length > 0) {
+                    lastNumberDisplay.textContent = drawnNumbers[drawnNumbers.length - 1];
+                } else {
+                    lastNumberDisplay.textContent = '--';
+                }
+            }
+        }
+
+        // Fonction de tirage
+        function drawNumber() {
+            if (drawnNumbers.length >= TOTAL_NUMBERS) {
+                alert("Tous les numéros ont été tirés !");
+                return;
+            }
+
+            let randomNumber;
+            // Boucle pour trouver un numéro pas encore tiré
+            do {
+                randomNumber = Math.floor(Math.random() * TOTAL_NUMBERS) + 1;
+            } while (drawnNumbers.includes(randomNumber));
+
+            // Ajouter au tableau et sauvegarder
+            drawnNumbers.push(randomNumber);
+            saveState();
+
+            // Mettre à jour l'affichage de manière instantanée
+            lastNumberDisplay.textContent = randomNumber;
+            const cell = document.getElementById(`cell-${randomNumber}`);
+            if (cell) {
+                cell.classList.add('drawn');
+            }
+        }
+
+        // Réinitialisation du jeu
+        function resetGame() {
+            const confirmReset = confirm("Êtes-vous sûr de vouloir effacer la partie en cours et recommencer ?");
+            if (confirmReset) {
+                drawnNumbers = [];
+                saveState();
+                lastNumberDisplay.textContent = '--';
+                // Reset visuel de la grille
+                const cells = document.querySelectorAll('.cell');
+                cells.forEach(cell => cell.classList.remove('drawn'));
+            }
+        }
+
+        // Événements boutons
+        btnDraw.addEventListener('click', drawNumber);
+        btnReset.addEventListener('click', resetGame);
+
+        // Événement Clavier (Touche Espace)
+        document.addEventListener('keydown', (event) => {
+            if (event.code === 'Space') {
+                event.preventDefault(); // Évite le scroll de page sur certains navigateurs
+                drawNumber();
+            }
+        });
+
+        // Démarrage de l'application
+        createGrid();
+        loadState(); // Reprend là où on s'était arrêté de manière transparente
+    </script>
+</body>
+</html>
