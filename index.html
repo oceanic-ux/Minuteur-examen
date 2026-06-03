@@ -419,6 +419,7 @@ input[type=text]:focus,input[type=number]:focus{border-color:#3a7bd5}
           <select id="voice-select" style="flex:1;max-width:200px;padding:5px 8px;border:1px solid #a0b8d8;border-radius:8px;font-size:13px;font-family:inherit;color:#1a1a18;background:#fff;outline:none">
             <option value="" id="ui-voice-default">Voix par défaut</option>
           </select>
+          <button onclick="testVoice(event)" title="Tester la voix" style="padding:5px 9px;border:1px solid #a0b8d8;border-radius:8px;background:#fff;cursor:pointer;font-size:15px;color:#1a4a8a;line-height:1;flex-shrink:0">▶</button>
         </div>
         <div style="height:1px;background:#c0d4ec;margin:2px 0"></div>
         <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleIBMode()">
@@ -669,6 +670,7 @@ var UI={
     silence:'Silence', sound:'Son', voice:'Voix',
     voiceLangLabel:'Langue des annonces',
     voiceSelectLabel:'Voix',
+    testVoiceBtn:'▶ Tester la voix',
     voiceDefault:'Voix par défaut',
     ibLabel:'Annonces IB officielles',
     ibSub:'Textes officiels du Baccalauréat International',
@@ -732,6 +734,7 @@ var UI={
     silence:'Silence', sound:'Sound', voice:'Voice',
     voiceLangLabel:'Announcement language',
     voiceSelectLabel:'Voice',
+    testVoiceBtn:'▶ Test voice',
     voiceDefault:'Default voice',
     ibLabel:'Official IB announcements',
     ibSub:'Official International Baccalaureate texts',
@@ -1201,6 +1204,9 @@ function buildVoiceSettingsPanel(){
     tb+='<button onclick="event.stopPropagation();resetTemplate('+q+eKey+q+')" '
       +'style="padding:3px 8px;border:1px solid #c00;border-radius:6px;background:#fff;color:#c00;cursor:pointer;font-size:11px;font-family:inherit;margin-left:auto">'
       +'↺ '+(fr?'Défaut':'Default')+'</button>';
+    tb+='<button onclick="event.stopPropagation();previewTemplate('+q+eKey+q+')" '
+      +'style="padding:3px 8px;border:1px solid #1a4a8a;border-radius:6px;background:#fff;color:#1a4a8a;cursor:pointer;font-size:11px;font-family:inherit">'
+      +'▶ '+(fr?'Tester':'Test')+'</button>';
     return '<div style="margin-bottom:8px;border:1px solid #c0d4ec;border-radius:8px;padding:8px 10px;background:#f0f6ff">'
       +'<div style="font-size:12px;font-weight:600;color:#1a4a8a;margin-bottom:6px">'+escHtml(displayLabel)+'</div>'
       +'<div id="tmpl-segs-'+eKey+'" style="display:flex;flex-direction:column;gap:4px">'+sh+'</div>'
@@ -1709,6 +1715,104 @@ function populateVoices(){
 if(window.speechSynthesis){window.speechSynthesis.onvoiceschanged=populateVoices;populateVoices();}
 
 // Sanitize text for TTS — spell out abbreviations that engines mispronounce
+function testVoice(e){
+  if(e)e.stopPropagation();
+  if(!window.speechSynthesis)return;
+  const fr=announceLang==='fr';
+  const text=fr
+    ?"Bonjour, je suis la voix que vous avez choisie pour les annonces."
+    :"Hello, I am the voice you have selected for announcements.";
+  window.speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang=fr?'fr-FR':'en-GB';
+  if(selectedVoice)u.voice=selectedVoice;
+  else{
+    const vv=window.speechSynthesis.getVoices();
+    const fb=fr
+      ?(vv.find(v=>v.lang.toLowerCase()==='fr-fr')||vv.find(v=>v.lang.toLowerCase().startsWith('fr')))
+      :(vv.find(v=>v.lang.toLowerCase()==='en-gb')||vv.find(v=>v.lang.toLowerCase().startsWith('en')));
+    if(fb)u.voice=fb;
+  }
+  u.rate=1;u.pitch=1;
+  window.speechSynthesis.speak(u);
+}
+
+function previewTemplate(eventKey){
+  if(!window.speechSynthesis)return;
+  const fr=announceLang==='fr';
+  const lang=announceLang;
+  const now=new Date();
+
+  // Duration: use first exam in list if available, else 1h30
+  const firstExam=examDefs.length>0?examDefs[0]:null;
+  const baseSecs=firstExam?getExamBase(firstExam.id):5400;
+  const sampleDur=baseSecs>0?fmtSpoken(baseSecs,fr):(fr?'une heure trente':'one hour thirty');
+
+  // Remaining time: use the alert threshold for this event
+  const isAlert30=eventKey==='alert30'||eventKey.startsWith('alert30_');
+  const isAlert5=eventKey==='alert5'||eventKey.startsWith('alert5_');
+  const sampleLeft=isAlert30?fmtSpoken(ALERT_30,fr)
+                 :isAlert5?fmtSpoken(alertSecs,fr)
+                 :(fr?'cinq minutes':'five minutes');
+
+  const sampleHeure=fr?(now.getHours()+' heures '+now.getMinutes().toString().padStart(2,'0'))
+                      :(now.getHours()+':'+now.getMinutes().toString().padStart(2,'0'));
+
+  // Get segments: custom store first, then TMPL_DEFAULTS, then IB official text
+  const store=_activeTemplateStore();
+  let segs=(store[lang]&&store[lang][eventKey])||[];
+
+  // For IB mode with no custom segs: fall back to official IB text
+  if(!segs.length&&_editingIBTemplates){
+    // Determine the base event and type from key (e.g. 'alert30_ns' → event='alert30', type='ns')
+    const parts=eventKey.split('_');
+    const baseEvent=parts.length>1?parts.slice(0,-1).join('_'):eventKey;
+    const ibType=parts.length>1?parts[parts.length-1]:'ns';
+    const sampleTimer={left:isAlert30?ALERT_30:alertSecs,total:baseSecs,label:'Principal',done:false};
+    const sampleExam={ibType,timers:[sampleTimer],readingOn:false};
+    const ibTxt=ibText(ibType,baseEvent,lang,sampleExam,now,sampleTimer);
+    if(ibTxt){
+      window.speechSynthesis.cancel();
+      const u=new SpeechSynthesisUtterance(ibTxt);
+      u.lang=fr?'fr-FR':'en-GB';
+      if(selectedVoice)u.voice=selectedVoice;
+      u.rate=1;u.pitch=1;
+      window.speechSynthesis.speak(u);
+      return;
+    }
+  }
+
+  // For normal mode with no custom segs: use TMPL_DEFAULTS
+  if(!segs.length){
+    const baseEvent=eventKey.includes('_')?eventKey.split('_').slice(0,-1).join('_'):eventKey;
+    segs=(TMPL_DEFAULTS[lang]&&TMPL_DEFAULTS[lang][baseEvent])||[];
+  }
+
+  if(!segs.length){
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(fr?'Aucune annonce définie.':'No announcement defined.');
+    u.lang=fr?'fr-FR':'en-GB';
+    if(selectedVoice)u.voice=selectedVoice;
+    window.speechSynthesis.speak(u);
+    return;
+  }
+
+  const text=segs.map(seg=>{
+    if(seg.k==='duree')return sampleDur;
+    if(seg.k==='heure')return sampleHeure;
+    if(seg.k==='restant')return sampleLeft;
+    if(seg.k==='lecture')return fr?'cinq minutes':'five minutes';
+    return seg.t||'';
+  }).join('').trim();
+
+  window.speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text||(fr?'Annonce vide.':'Empty announcement.'));
+  u.lang=fr?'fr-FR':'en-GB';
+  if(selectedVoice)u.voice=selectedVoice;
+  u.rate=1;u.pitch=1;
+  window.speechSynthesis.speak(u);
+}
+
 function sanitizeForTTS(text, fr){
   if(!text)return text;
   // Level abbreviations — insert non-breaking spaces so TTS spells them out
